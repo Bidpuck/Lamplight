@@ -76,6 +76,7 @@ const Player = {
     this.bookChars = bookChars;
     this.ch = pos && chapters[pos.chapter] ? pos.chapter : 0;
     this.s = pos && chapters[this.ch].sentences[pos.sentence] ? pos.sentence : 0;
+    this.positionAt = pos && pos.at ? pos.at : 0;
     this.updateMetadata();
     this.emit('chapter'); this.emit('position'); this.emit('state');
   },
@@ -333,7 +334,8 @@ const Player = {
   // ---------------- Saving ----------------
   saveProgress(){
     if(!this.book) return;
-    saveProgressFor(this.book.progressKey, { chapter: this.ch, sentence: this.s });
+    this.positionAt = Date.now(); // when the place in the book last moved
+    saveProgressFor(this.book.progressKey, { chapter: this.ch, sentence: this.s, at: this.positionAt });
   },
   // The library card's summary (percent, time left) is written at most every few
   // seconds, and always when asked to force it (pause, hide, unload).
@@ -347,7 +349,10 @@ const Player = {
     updateLibraryBook(this.book.id, { progress: {
       chapter: this.ch, sentence: this.s, chapterTitle: ch ? ch.title : '',
       fraction: this.finished ? 1 : info.bookFraction, secLeft: this.finished ? 0 : info.bookSecLeft,
-      finished: this.finished, at: now
+      finished: this.finished,
+      // Stamped with the time the position last moved, not the time of this save, so a
+      // backup merge compares card progress and reading position by the same clock.
+      at: this.positionAt || 0
     }});
   },
 

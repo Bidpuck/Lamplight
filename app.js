@@ -443,6 +443,54 @@ const Reader = {
   }
 };
 
+// ---------------- Search within the book ----------------
+// Lives in the Contents sheet: type and the chapter list gives way to matching
+// sentences; tap one to start reading there.
+const Search = {
+  run(query){
+    const list = el('searchResults'), foot = el('searchFoot');
+    const q = query.trim();
+    if(!q){ list.classList.add('hidden'); el('tocList').classList.remove('hidden'); foot.textContent = ''; return; }
+    // Match on the original text with a case-insensitive pattern, so the offset used
+    // for the snippet is an offset into that same text (lower-casing can change length).
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu');
+    const MAX = 100;
+    const hits = [];
+    outer: for(let ci = 0; ci < Player.chapters.length; ci++){
+      const sentences = Player.chapters[ci].sentences;
+      for(let si = 0; si < sentences.length; si++){
+        const m = re.exec(sentences[si]);
+        if(m){ hits.push({ item: { ch: ci, s: si }, at: m.index, len: m[0].length }); if(hits.length >= MAX) break outer; }
+      }
+    }
+    list.innerHTML = '';
+    el('tocList').classList.add('hidden'); list.classList.remove('hidden');
+    if(!hits.length){ list.innerHTML = '<div class="row"><span class="sub">Nothing found for \u201C' + query.trim().replace(/</g, '&lt;') + '\u201D</span></div>'; foot.textContent = ''; return; }
+    hits.forEach(({ item, at, len }) => {
+      const ch = Player.chapters[item.ch];
+      const text = ch.sentences[item.s];
+      const q = { length: len };
+      const r = document.createElement('button'); r.className = 'row result';
+      const body = document.createElement('span');
+      const snip = document.createElement('span'); snip.className = 'snip';
+      // Show a window around the match with the match itself marked.
+      const start = Math.max(0, at - 60), end = Math.min(text.length, at + q.length + 90);
+      if(start > 0) snip.appendChild(document.createTextNode('\u2026'));
+      snip.appendChild(document.createTextNode(text.slice(start, at)));
+      const m = document.createElement('mark'); m.textContent = text.slice(at, at + q.length); snip.appendChild(m);
+      snip.appendChild(document.createTextNode(text.slice(at + q.length, end) + (end < text.length ? '\u2026' : '')));
+      const where = document.createElement('span'); where.className = 'where'; where.textContent = ch.title;
+      body.appendChild(snip); body.appendChild(where); r.appendChild(body);
+      r.addEventListener('click', () => { closeSheet('tocSheet'); Player.seek(item.ch, item.s); });
+      list.appendChild(r);
+    });
+    foot.textContent = hits.length >= MAX ? 'First ' + MAX + ' matches shown. Add a word to narrow it down.' : hits.length + (hits.length === 1 ? ' match' : ' matches');
+  }
+};
+let searchTimer = null;
+el('bookSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => Search.run(el('bookSearch').value), 150); });
+el('bookSearch').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); const first = el('searchResults').querySelector('.result'); if(first) first.click(); } });
+
 // Wire the reader to the player.
 Player.on((type, detail) => {
   if(type === 'chapter'){ if(!el('viewReader').classList.contains('hidden')) Reader.renderChapter(); }
@@ -468,7 +516,7 @@ textPane.addEventListener('scroll', () => Reader.onUserScroll(), { passive: true
 el('returnPill').addEventListener('click', () => { Display.follow = true; settingSet('follow', '1'); applyDisplay(); Reader.followScroll(false); });
 
 el('backBtn').addEventListener('click', () => { Player.saveSummary(true); showView('viewLibrary'); Library.refresh(); });
-el('chapBtn').addEventListener('click', () => { Reader.renderToc(); openSheet('tocSheet'); });
+el('chapBtn').addEventListener('click', () => { Reader.renderToc(); el('bookSearch').value = ''; Search.run(''); openSheet('tocSheet'); });
 el('displayBtn').addEventListener('click', () => openSheet('displaySheet'));
 el('playBtn').addEventListener('click', () => { if(Player.state === 'idle'){ Display.follow = true; settingSet('follow', '1'); applyDisplay(); } Player.toggle(); });
 el('prevBtn').addEventListener('click', () => Player.prev());
@@ -652,6 +700,102 @@ el('persistRow').addEventListener('click', async () => {
 });
 el('clearAudioRow').addEventListener('click', () => { Player.cache.clear(); setEngineStatus('Prepared audio cleared.'); setTimeout(() => setEngineStatus(''), 1500); });
 
+// Backup and restore (also how two of your own devices stay in step).
+function backupFileName(){ const d = new Date(); return 'Lamplight backup ' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + '.zip'; }
+function showBackupDate(){
+  const at = parseInt(settingGet('lastBackupAt', '0'), 10);
+  el('backupVal').textContent = at ? new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Never';
+}
+// Building the zip can take a while with a real library, and the share sheet only
+// opens from a fresh tap. So the first tap packs the file and the next tap hands it
+// over (a download needs no such care and happens at once).
+let pendingBackup = null;
+el('backupRow').addEventListener('click', async () => {
+  const foot = el('backupFoot');
+  const canShare = !!(navigator.canShare && navigator.share);
+  try{
+    if(!pendingBackup){
+      foot.textContent = 'Packing your library…';
+      const blob = await exportBackupBlob();
+      pendingBackup = new File([blob], backupFileName(), { type: 'application/zip' });
+      if(canShare && navigator.canShare({ files: [pendingBackup] })){
+        el('backupVal').textContent = 'Tap to save';
+        foot.textContent = 'Backup ready (' + Math.max(1, Math.round(blob.size / 1048576)) + ' MB). Tap again to save it to iCloud Drive, Google Drive or anywhere else.';
+        return;
+      }
+    }
+    const file = pendingBackup;
+    if(canShare && navigator.canShare({ files: [file] })){
+      try{ await navigator.share({ files: [file], title: 'Lamplight backup' }); }
+      catch(err){
+        if(err && err.name === 'AbortError'){ foot.textContent = 'Not saved. Tap again when you are ready.'; return; }
+        throw err;
+      }
+    } else {
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a'); link.href = url; link.download = file.name; document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+    pendingBackup = null;
+    settingSet('lastBackupAt', Date.now()); showBackupDate();
+    foot.textContent = 'Saved ' + file.name + '. Keep it in iCloud Drive or Google Drive, then restore it on your other device.';
+  } catch(err){
+    console.error(err);
+    pendingBackup = null; showBackupDate();
+    foot.textContent = 'Could not make the backup: ' + (err && err.message ? err.message : err);
+  }
+});
+el('restoreRow').addEventListener('click', () => el('restoreInput').click());
+el('restoreInput').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if(!file) return;
+  const foot = el('backupFoot');
+  foot.textContent = 'Restoring…';
+  try{
+    const result = await importBackup(file);
+    loadFilterSettings(); loadPronunciationRules(); Library.shelves = loadShelves();
+    el('filterWords').value = customBadWords.join(', ');
+    Player.clearAudio(); // clips prepared under the old rules and filter words are stale now
+    if(Player.chapters.length){ Reader.renderedCh = -1; Reader.highlight(); }
+    await Library.refresh(); syncSettings();
+    // If the open book's place moved forward on the other device, go there now.
+    if(Reader.book && Player.state === 'idle'){
+      const pos = result.newerPositions[Reader.book.progressKey];
+      if(pos) Player.seek(pos.chapter, pos.sentence);
+    }
+    foot.textContent = 'Restored: ' + result.booksAdded + ' book' + (result.booksAdded === 1 ? '' : 's') + ' added, ' + result.booksUpdated + ' merged, ' + result.positionsUpdated + ' reading position' + (result.positionsUpdated === 1 ? '' : 's') + ' moved forward.';
+  } catch(err){
+    console.error(err);
+    foot.textContent = 'Could not restore: ' + (err && err.message ? err.message : err);
+  }
+});
+showBackupDate();
+
+// ---------------- Open in Lamplight: share sheet, file handler, offline shell ----------------
+if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker not registered:', err)); }
+// Installed app opened with a file (desktop and Android browsers that support file handlers).
+if('launchQueue' in window && window.launchQueue.setConsumer){
+  window.launchQueue.setConsumer(async params => {
+    for(const handle of (params.files || [])){
+      try{ handleFile(await handle.getFile()); } catch(err){ console.warn('Could not open the launched file:', err); }
+    }
+  });
+}
+// A book shared to the installed app: the service worker parked it in a cache.
+async function openSharedFile(){
+  if(!new URLSearchParams(location.search).has('shared')) return;
+  history.replaceState(null, '', location.pathname);
+  try{
+    const cache = await caches.open('lamplight-shared');
+    const res = await cache.match('shared-file');
+    if(!res) return;
+    const name = decodeURIComponent(res.headers.get('X-File-Name') || 'book.epub');
+    const blob = await res.blob();
+    await cache.delete('shared-file');
+    handleFile(new File([blob], name, { type: blob.type }));
+  } catch(err){ console.warn('Could not open the shared file:', err); }
+}
+
 // Status text from the voice layer, shown wherever the person might be looking.
 Voice.onStatus(text => {
   el('engineStatus').textContent = text;
@@ -663,6 +807,7 @@ Voice.onStatus(text => {
 // ---------------- Boot ----------------
 syncSettings();
 Library.refresh().then(() => {
+  openSharedFile();
   // Warm up the voice in the background so the first Play doesn't wait on it.
   if(Voice.settings.useServer || Voice.settings.engine === 'piper') Voice.ensureReady().then(() => Reader.updateChips()).catch(() => {});
   requestPersistentStorage();
