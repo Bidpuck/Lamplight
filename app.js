@@ -208,8 +208,137 @@ function updateServerRowsVisibility(){
 }
 updateServerRowsVisibility();
 
+// Wraps fetch() for every server call so a failure says *what* went wrong. A bare
+// fetch() rejection on iOS is just "Load failed" — which covers the Mac being asleep,
+// the server not running, Tailscale being off on this device, and the server refusing
+// the request (CORS) alike — and an unreachable tailnet host can leave a request
+// pending for minutes, so voice-list requests also get a timeout.
+async function serverFetch(path, options, timeoutMs){
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try{
+    return await fetch(serverUrl + path, Object.assign({}, options, controller ? { signal: controller.signal } : {}));
+  } catch(err){
+    const why = err && err.name === 'AbortError' ? 'no answer after ' + Math.round(timeoutMs/1000) + 's' : 'connection failed';
+    throw new Error("Can't reach the voice server at " + serverUrl + ' (' + why + '). ' +
+      'Check that the server is running and awake (a sleeping Hugging Face Space takes a minute or two to wake), ' +
+      'and for the Mac server that Tailscale is on for this device.');
+  } finally {
+    if(timer) clearTimeout(timer);
+  }
+}
+const SERVER_VOICES_TIMEOUT_MS = 15000;
+
+// The server's own explanation (e.g. "Wrong access key") beats a bare status code.
+async function serverErrorFrom(res, path){
+  let detail = '';
+  try{ detail = (await res.json()).detail || ''; } catch(e){ /* not JSON */ }
+  return new Error(detail ? 'Voice server: ' + detail : 'Voice server answered with HTTP ' + res.status + ' for ' + path + '.');
+}
+
+// ---------------- Voice server connection popup ----------------
+// Shown while the app is fetching the server's voice list — the step that proves the
+// server is reachable and ready — and cleared once voices are in. A Hugging Face Space
+// that has gone to sleep takes a minute or two to wake, so this keeps retrying (with a
+// visible timer) instead of giving up after one timed-out request.
+const SERVER_WAKE_MAX_MS = 4 * 60 * 1000;
+const SERVER_RETRY_DELAY_MS = 4000;
+let connectToastTicker = null, connectToastHideTimer = null;
+
+function setConnectToast(state, title, detail){
+  const toast = el('connectToast');
+  clearTimeout(connectToastHideTimer);
+  toast.classList.remove('hidden', 'fading', 'is-ready', 'is-error');
+  if(state !== 'connecting') toast.classList.add('is-' + state);
+  el('connectTitle').textContent = title;
+  el('connectDetail').textContent = detail || '';
+  el('connectActions').classList.toggle('hidden', state !== 'error');
+}
+
+function hideConnectToast(delayMs){
+  clearTimeout(connectToastHideTimer);
+  connectToastHideTimer = setTimeout(() => {
+    const toast = el('connectToast');
+    toast.classList.add('fading');
+    connectToastHideTimer = setTimeout(() => toast.classList.add('hidden'), 260);
+  }, delayMs || 0);
+}
+
+el('connectClose').addEventListener('click', () => hideConnectToast(0));
+el('connectRetry').addEventListener('click', async () => {
+  kokoroServerVoicesCache = null;
+  piperServerVoicesCache = null;
+  setEngineStatus('');
+  await refreshVoiceListForCurrentEngine();
+});
+
+// Fetches a server voice list, retrying while the server is unreachable or waking.
+// Errors the server states plainly (wrong key, Kokoro-only server, ...) stop at once.
+// Concurrent callers for the same list share one attempt, so there's only ever one popup.
+const serverVoicesInFlight = new Map();
+function fetchServerVoices(path){
+  if(serverVoicesInFlight.has(path)) return serverVoicesInFlight.get(path);
+  const attempt = (async () => {
+    const started = Date.now();
+    const elapsed = () => Math.round((Date.now() - started) / 1000);
+    setConnectToast('connecting', 'Connecting to voice server…', '');
+    clearInterval(connectToastTicker);
+    connectToastTicker = setInterval(() => {
+      if(Date.now() - started < 6000) return;
+      el('connectTitle').textContent = 'Waking up the voice server…';
+      el('connectDetail').textContent = 'This can take a minute or two after it has been idle. (' + elapsed() + 's)';
+    }, 1000);
+    try{
+      let lastErr = null;
+      while(true){
+        if(!useServer) throw new Error('Local server was turned off.');
+        let res = null;
+        try{
+          res = await serverFetch(path, {}, SERVER_VOICES_TIMEOUT_MS);
+        } catch(err){ lastErr = err; } // unreachable or timed out: worth retrying
+        if(res && res.ok){
+          try{
+            const data = await res.json();
+            clearInterval(connectToastTicker);
+            const count = voiceIdsFrom(data.voices).length;
+            setConnectToast('ready', 'Voice server ready', count + ' voices available.');
+            hideConnectToast(1400);
+            return data.voices;
+          } catch(err){
+            lastErr = new Error('The voice server sent back something other than a voice list.'); // e.g. a "starting up" page
+          }
+        } else if(res && (res.status >= 500 || res.status === 429)){
+          lastErr = await serverErrorFrom(res, path); // still starting up, or overloaded
+        } else if(res){
+          throw await serverErrorFrom(res, path); // a definite answer; retrying won't change it
+        }
+        if(Date.now() - started > SERVER_WAKE_MAX_MS) throw lastErr;
+        await new Promise(resolve => setTimeout(resolve, SERVER_RETRY_DELAY_MS));
+      }
+    } catch(err){
+      clearInterval(connectToastTicker);
+      if(useServer){
+        setConnectToast('error', "Couldn't connect to the voice server", err && err.message ? err.message : String(err));
+      } else {
+        hideConnectToast(0);
+      }
+      throw err;
+    } finally {
+      serverVoicesInFlight.delete(path);
+    }
+  })();
+  serverVoicesInFlight.set(path, attempt);
+  return attempt;
+}
+
+// The server's voices list may come back as an array of ids or as an object keyed by id.
+function voiceIdsFrom(voices){
+  if(Array.isArray(voices)) return voices.map(v => typeof v === 'string' ? v : (v && (v.id || v.name))).filter(Boolean);
+  return (voices && typeof voices === 'object') ? Object.keys(voices) : [];
+}
+
 async function generateViaServer(enginePath, text, voice, speed){
-  const res = await fetch(serverUrl + '/' + enginePath + '/tts', {
+  const res = await serverFetch('/' + enginePath + '/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, voice, speed })
@@ -226,10 +355,7 @@ let kokoroServerVoicesCache = null;
 const kokoroServerEngine = {
   async ensureLoaded(){
     if(kokoroServerVoicesCache) return true;
-    const res = await fetch(serverUrl + '/kokoro/voices');
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    kokoroServerVoicesCache = data.voices || [];
+    kokoroServerVoicesCache = voiceIdsFrom(await fetchServerVoices('/kokoro/voices'));
     return true;
   },
   isLoaded(){ return !!kokoroServerVoicesCache; },
@@ -240,10 +366,7 @@ const kokoroServerEngine = {
 let piperServerVoicesCache = null;
 const piperServerEngine = {
   async listVoices(){
-    const res = await fetch(serverUrl + '/piper/voices');
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    piperServerVoicesCache = data.voices || [];
+    piperServerVoicesCache = (await fetchServerVoices('/piper/voices')) || [];
     return piperServerVoicesCache;
   },
   async storedVoices(){
@@ -252,30 +375,50 @@ const piperServerEngine = {
     if(piperServerVoicesCache) return piperServerVoicesCache;
     return await piperServerEngine.listVoices();
   },
-  async ensureVoice(){ return true; }, // unreachable in practice (storedVoices() above always short-circuits first)
+  // Only reached when storedVoices() above failed — i.e. the server couldn't be reached —
+  // so retry the listing to surface that error instead of reporting the voice as ready.
+  async ensureVoice(){ await piperServerEngine.listVoices(); return true; },
   async generateBlob(text, voiceId){ return generateViaServer('piper', text, voiceId, parseFloat(el('rateSlider').value)); }
 };
 
+// The in-browser engines register as window.KokoroWasmEngine / window.PiperWasmEngine
+// once their modules (and, for Piper, its CDN library) have loaded; window.KokoroEngine /
+// window.PiperEngine are set only here. The server engines don't depend on those modules
+// at all, so they're installed straight away — a slow or blocked CDN no longer leaves
+// server mode without an engine.
 let kokoroWasmEngine = null, piperWasmEngine = null;
 function applyEngineBackends(){
-  if(kokoroWasmEngine) window.KokoroEngine = useServer ? kokoroServerEngine : kokoroWasmEngine;
-  if(piperWasmEngine) window.PiperEngine = useServer ? piperServerEngine : piperWasmEngine;
+  const ke = useServer ? kokoroServerEngine : kokoroWasmEngine;
+  const pe = useServer ? piperServerEngine : piperWasmEngine;
+  if(ke) window.KokoroEngine = ke;
+  if(pe) window.PiperEngine = pe;
 }
+applyEngineBackends();
 // Swapping in the right backend and prepping the restored engine (so nothing has to
 // download/connect later when Play is first pressed) happen in the same callback,
 // deliberately — keeping them as one sequence avoids a race against the "which engine
 // is this book restoring?" logic below running before the server/WASM swap has happened.
-waitForGlobal('KokoroEngine').then(ke => {
+// Deferred until the rest of this script has run, so everything these touch is defined.
+if(useServer) Promise.resolve().then(() => {
+  if(engine === 'kokoro') ensureKokoroReadyGuarded();
+  else if(engine === 'piper'){
+    populatePiperVoiceSelect().then(() => {
+      const voiceId = el('voiceSelect').value;
+      if(voiceId) ensurePiperVoiceReady(voiceId);
+    });
+  }
+});
+waitForGlobal('KokoroWasmEngine').then(ke => {
   if(!ke) return;
   kokoroWasmEngine = ke;
   applyEngineBackends();
-  if(engine === 'kokoro') ensureKokoroReadyGuarded();
+  if(engine === 'kokoro' && !useServer) ensureKokoroReadyGuarded();
 });
-waitForGlobal('PiperEngine').then(pe => {
+waitForGlobal('PiperWasmEngine').then(pe => {
   if(!pe) return;
   piperWasmEngine = pe;
   applyEngineBackends();
-  if(engine === 'piper'){
+  if(engine === 'piper' && !useServer){
     populatePiperVoiceSelect().then(() => {
       const voiceId = el('voiceSelect').value;
       if(voiceId) ensurePiperVoiceReady(voiceId);
@@ -306,6 +449,7 @@ el('useServerToggle').addEventListener('change', async () => {
   applyEngineBackends();
   neuralAudioCache.clear();
   updateServerRowsVisibility();
+  if(!useServer) hideConnectToast(0);
   await refreshVoiceListForCurrentEngine();
 });
 
@@ -333,7 +477,13 @@ function waitForGlobal(name, timeoutMs){
 }
 
 el('refreshVoicesBtn').addEventListener('click', async () => {
-  if(engine === 'piper'){
+  if(useServer){
+    // Ask the server again rather than re-rendering a cached (or failed) list.
+    kokoroServerVoicesCache = null;
+    piperServerVoicesCache = null;
+    setEngineStatus('');
+    await refreshVoiceListForCurrentEngine();
+  } else if(engine === 'piper'){
     await populatePiperVoiceSelect();
     const voiceId = el('voiceSelect').value;
     if(voiceId) ensurePiperVoiceReady(voiceId); // confirms the shown voice is actually the one that will play
@@ -1419,11 +1569,21 @@ async function populatePiperVoiceSelect(){
   placeholder.textContent = 'Loading voices…';
   sel.appendChild(placeholder);
 
-  const voices = await window.PiperEngine.listVoices();
+  let voices;
+  try{
+    voices = await window.PiperEngine.listVoices();
+  } catch(err){
+    // Only the server engine throws here (the in-browser one catches its own errors).
+    console.error(err);
+    if(engine !== 'piper') return;
+    placeholder.textContent = 'No voices — see message below';
+    setEngineStatus(err && err.message ? err.message : String(err));
+    return;
+  }
   if(engine !== 'piper') return; // engine was switched again while this was in flight
 
   sel.innerHTML = '';
-  let ids = (voices && typeof voices === 'object') ? Object.keys(voices).filter(id => id.startsWith('en_')).sort() : [];
+  let ids = voiceIdsFrom(voices).filter(id => id.startsWith('en_')).sort();
   if(!ids.length){
     console.warn('Piper voices() returned nothing — falling back to a known voice list.');
     ids = FALLBACK_PIPER_VOICES;
@@ -1478,7 +1638,7 @@ async function ensurePiperVoiceReady(voiceId){
     } catch(err){
       console.error(err);
       const detail = err && err.message ? err.message : String(err);
-      setEngineStatus('Could not download that voice (' + detail + ').');
+      setEngineStatus(useServer ? detail : 'Could not download that voice (' + detail + ').');
       return false;
     }
   });
@@ -1532,7 +1692,12 @@ async function ensureKokoroReady(){
     return true;
   } catch(err){
     console.error(err);
-    setEngineStatus('Could not load the neural voice (needs internet the first time).');
+    if(useServer){
+      el('voiceSelect').innerHTML = '<option>No voices — see message below</option>';
+      setEngineStatus(err && err.message ? err.message : String(err));
+    } else {
+      setEngineStatus('Could not load the neural voice (needs internet the first time).');
+    }
     return false;
   }
 }

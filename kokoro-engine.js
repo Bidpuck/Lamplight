@@ -152,7 +152,7 @@
     return kokoroWorker;
   }
 
-  window.KokoroEngine = {
+  window.KokoroWasmEngine = {
     async ensureLoaded(onProgress){
       if(kokoroLoaded) return true;
       if(!kokoroLoadPromise){

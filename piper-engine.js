@@ -4,7 +4,7 @@
   // fetched only when that specific voice is actually used.
   import * as piperTTS from "https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/+esm";
 
-  window.PiperEngine = {
+  window.PiperWasmEngine = {
     async listVoices(){
       try{ return await piperTTS.voices(); } catch(e){ console.warn('Piper voices() failed:', e); return null; }
     },
