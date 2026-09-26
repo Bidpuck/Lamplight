@@ -12,210 +12,202 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Lamplight">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=Atkinson+Hyperlegible:wght@400;700&family=Lexend:wght@400;600&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<header>
-  <h1><span class="dot"></span>Lamplight Reader</h1>
-  <span class="tag" id="headerTag">Your books, read aloud — entirely on this device</span>
-  <div class="toolbar-row hidden" id="headerActions">
-    <button class="chip" id="newBookBtn">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,5 8,12 15,19"/></svg>
-      Library
-    </button>
-    <button class="chip" id="tocBtn">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>
-      Contents
-    </button>
-    <button class="chip" id="settingsBtn">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="7" cy="17" r="2" fill="currentColor" stroke="none"/></svg>
-      Settings
-    </button>
-  </div>
-</header>
-
-<div class="layout">
-  <aside class="sidebar" id="sidebar">
-    <h2>Chapters</h2>
-    <div class="settings-group" id="chapterList"></div>
-  </aside>
-
-  <main>
-    <div class="page">
-
-      <div id="uploadView">
-        <div id="libraryListWrap" class="hidden" style="margin-bottom:24px;">
-          <h2 style="font-size:12px; font-weight:600; color:var(--ink-soft); margin:4px 4px 10px;">Your Library</h2>
-          <div class="settings-group" id="libraryList"></div>
-        </div>
-        <div class="drop" id="dropZone">
-          <svg class="drop-icon" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 19.5V6a2 2 0 0 1 2-2h8.5L20 8.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2.5Z"/>
-            <path d="M14 4v4.5H18.5"/>
-            <path d="M9 13.5l3-3 3 3M12 10.5V17"/>
-          </svg>
-          <h3>Bring a book to the lamp</h3>
-          <p>Drop an EPUB or PDF here, or choose a file. Nothing is uploaded anywhere — parsing and reading both happen in this browser tab.</p>
-          <label class="btn" for="fileInput">Choose a file</label>
-          <input type="file" id="fileInput" accept=".epub,.pdf">
-          <div class="status" id="loadStatus"></div>
-        </div>
-      </div>
-
-      <div id="readerView" class="hidden">
-        <p class="book-title" id="bookTitle"></p>
-        <p class="book-sub" id="bookSub"></p>
-        <div class="prose" id="proseText"></div>
-      </div>
-
-    </div>
-  </main>
-</div>
-
-<div class="player" id="player">
-  <div class="player-status" id="engineStatus"></div>
-  <div class="player-scrub">
-    <div class="lamp-progress" id="lampProgress"><div class="lamp-progress-fill" id="lampProgressFill"></div></div>
-    <span class="time" id="posLabel">0 / 0</span>
-  </div>
-  <div class="player-controls">
-    <button class="ctrl-btn" id="prevBtn" aria-label="Previous sentence">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="2.2" height="14"/><polygon points="18,5 18,19 9,12"/></svg>
-    </button>
-    <button class="play" id="playBtn" aria-label="Play">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 8,19 19,12"/></svg>
-    </button>
-    <button class="ctrl-btn" id="nextBtn" aria-label="Next sentence">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="15.8" y="5" width="2.2" height="14"/><polygon points="6,5 6,19 15,12"/></svg>
-    </button>
-  </div>
-</div>
-
-<div class="modal-backdrop hidden" id="tocModal">
-  <div class="modal-panel">
-    <div class="sheet-handle"></div>
-    <div class="modal-header">
-      <h2>Contents</h2>
-      <button class="modal-close" id="tocModalClose" aria-label="Close">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+<!-- ================= Library ================= -->
+<section class="view" id="viewLibrary">
+  <div class="scroll lib">
+    <div class="lib-head">
+      <h1><span class="dot" id="serverDot"></span>Lamplight</h1>
+      <button class="ib" id="libSettingsBtn" aria-label="Settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="7" cy="17" r="2" fill="currentColor" stroke="none"/></svg>
       </button>
     </div>
-    <div class="settings-group" id="tocModalList"></div>
+    <p class="lib-sub">Your books, read aloud on this device</p>
+    <div class="shelves" id="shelfRow"></div>
+    <div class="book-list" id="bookList"></div>
+    <div class="drop" id="dropZone">
+      <svg class="drop-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V6a2 2 0 0 1 2-2h8.5L20 8.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2.5Z"/><path d="M14 4v4.5H18.5"/><path d="M9 13.5l3-3 3 3M12 10.5V17"/></svg>
+      <h3>Add a book</h3>
+      <p>Drop an EPUB or PDF here, or choose a file. Nothing is uploaded anywhere; the book stays on this device.</p>
+      <label class="btn" for="fileInput">Choose a file</label>
+      <input type="file" id="fileInput" accept=".epub,.pdf">
+      <div class="status" id="loadStatus"></div>
+    </div>
   </div>
-</div>
+</section>
 
-<div class="modal-backdrop hidden" id="settingsModal">
-  <div class="modal-panel">
-    <div class="sheet-handle"></div>
-    <div class="modal-header">
-      <h2>Settings</h2>
-      <button class="modal-close" id="settingsModalClose" aria-label="Close">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
-      </button>
-    </div>
-
-    <div class="settings-group">
-      <div class="settings-row">
-        <span class="settings-row-label">Voice engine</span>
-        <select id="engineSelect" class="native-select">
-          <option value="kokoro">Kokoro AI voice</option>
-          <option value="piper">Piper AI voice</option>
-        </select>
-      </div>
-      <p class="footnote" id="settingsEngineStatus" style="padding:0 16px 12px; min-height:16px;"></p>
-      <div class="settings-row" id="useServerRow">
-        <span class="settings-row-label">Use local server</span>
-        <label class="ios-switch">
-          <input type="checkbox" id="useServerToggle">
-          <span class="track"></span><span class="thumb"></span>
-        </label>
-      </div>
-      <div class="settings-row settings-row-stacked hidden" id="serverUrlRow">
-        <span class="settings-row-label">Server address</span>
-        <input type="text" id="serverUrlInput" class="pron-input" style="width:100%;" placeholder="https://your-mac.your-tailnet.ts.net:8123">
-      </div>
-      <div class="settings-row">
-        <span class="settings-row-label">Voice</span>
-        <div class="speed-control">
-          <select id="voiceSelect" class="native-select"></select>
-          <button class="ctrl-btn" id="refreshVoicesBtn" aria-label="Refresh voice list" style="color:var(--ink-soft); flex-shrink:0;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M3 12a9 9 0 0 0 15.3 6.4L21 16M21 8v-4m0 4h-4M21 16v4m0-4h-4"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="settings-row">
-        <span class="settings-row-label">Speed</span>
-        <div class="speed-control">
-          <input type="range" id="rateSlider" min="0.6" max="2" step="0.05" value="1">
-          <span class="rate-label" id="rateLabel">1.0×</span>
-        </div>
-      </div>
-      <div class="settings-row" id="pauseTightnessRow">
-        <span class="settings-row-label">Sentence pause</span>
-        <div class="speed-control">
-          <input type="range" id="pauseTightnessSlider" min="50" max="500" step="10" value="80">
-          <span class="rate-label" id="pauseTightnessLabel">80ms</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-group">
-      <div class="settings-row">
-        <span class="settings-row-label">Text size</span>
-        <div class="speed-control">
-          <input type="range" id="fontSizeSlider" min="14" max="30" step="1" value="19">
-          <span class="fontsize-readout" id="fontSizeReadout">19px</span>
-        </div>
-      </div>
-      <div class="settings-row">
-        <span class="settings-row-label">Dark mode</span>
-        <label class="ios-switch">
-          <input type="checkbox" id="darkModeToggle">
-          <span class="track"></span><span class="thumb"></span>
-        </label>
-      </div>
-    </div>
-
-    <div class="settings-group">
-      <div class="settings-row">
-        <span class="settings-row-label">Filter strong language</span>
-        <label class="ios-switch">
-          <input type="checkbox" id="filterToggle">
-          <span class="track"></span><span class="thumb"></span>
-        </label>
-      </div>
-      <div class="settings-row settings-row-stacked">
-        <span class="settings-row-label">Additional words to filter</span>
-        <textarea id="filterWords" placeholder="comma-separated, e.g. wordone, wordtwo"></textarea>
-      </div>
-    </div>
-    <p class="footnote">Filtering muffles matched words in speech and masks them on screen. Applies to every book.</p>
-
-    <h2 style="font-family:'Source Serif 4', serif; font-size:16px; margin:22px 4px 10px;">Pronunciation</h2>
-    <div class="settings-group" id="pronunciationGroup"></div>
-    <div class="settings-group">
-      <div class="settings-row settings-row-stacked">
-        <span class="settings-row-label">Add a rule</span>
-        <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-          <input type="text" id="pronFindInput" class="pron-input" placeholder="As written (e.g. Ludger)">
-          <input type="text" id="pronReplaceInput" class="pron-input" placeholder="Say instead (blank = skip)">
-        </div>
-        <label style="display:flex; align-items:center; gap:7px; margin-top:10px; font-size:13.5px; color:var(--ink-soft); cursor:pointer;">
-          <input type="checkbox" id="pronMatchCase" style="width:16px;height:16px;"> Match case
-        </label>
-        <div style="display:flex; gap:8px; margin-top:12px;">
-          <button class="chip" id="pronPreviewBtn" style="flex:1; justify-content:center;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 8,19 19,12"/></svg>
-            Preview
-          </button>
-          <button class="btn" id="pronAddBtn" style="flex:1;">Add rule</button>
-        </div>
-      </div>
-    </div>
-    <p class="footnote">Fixes mispronounced names or words when read aloud — matches the text anywhere it appears. Leave "Say instead" blank to skip that word/phrase entirely. Applies only to speech; the on-screen text is unchanged.</p>
+<!-- ================= Reader ================= -->
+<section class="view hidden" id="viewReader">
+  <div class="rtop">
+    <button class="ib" id="backBtn" aria-label="Library"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,5 8,12 15,19"/></svg></button>
+    <button class="chap" id="chapBtn"><b id="chapTitle">Chapter</b><span id="chapSub">Tap for contents</span></button>
+    <button class="ib" id="displayBtn" aria-label="Display"><span class="aa">Aa</span></button>
+    <button class="ib" id="readerSettingsBtn" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="7" cy="17" r="2" fill="currentColor" stroke="none"/></svg></button>
   </div>
-</div>
+  <div class="text" id="text"></div>
+  <button class="retpill hidden" id="returnPill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,9 12,15 18,9"/></svg>Back to where it's reading</button>
+  <div class="player">
+    <div class="player-status" id="engineStatus"></div>
+    <div class="nowline"><span class="lbl">Now</span><span class="txt" id="nowText"></span></div>
+    <div class="scrub">
+      <span id="posLeft">0:00</span>
+      <div class="bar" id="scrubBar" role="slider" aria-label="Position in chapter"><i id="scrubFill"></i></div>
+      <span id="posRight">-0:00</span>
+    </div>
+    <div class="ctrls">
+      <button class="chip" id="speedChip">1.0×</button>
+      <button class="cb" id="prevBtn" aria-label="Back"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="2.2" height="14"/><polygon points="18,5 18,19 9,12"/></svg></button>
+      <button class="play" id="playBtn" aria-label="Play"><svg id="playIcon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 8,19 19,12"/></svg></button>
+      <button class="cb" id="nextBtn" aria-label="Forward"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="15.8" y="5" width="2.2" height="14"/><polygon points="6,5 6,19 15,12"/></svg></button>
+      <button class="chip right" id="voiceChip">Voice</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Settings ================= -->
+<section class="view hidden" id="viewSettings">
+  <div class="stop">
+    <button class="ib" id="settingsBackBtn" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,5 8,12 15,19"/></svg></button>
+    <h2>Settings</h2>
+  </div>
+  <div class="scroll sbody">
+    <div class="sec">Listening</div>
+    <div class="grp">
+      <button class="row" id="setVoiceRow"><span>Voice and speed</span><span class="val" id="setVoiceVal">—</span></button>
+      <div class="row"><span>Skip buttons move</span><div class="seg" id="skipSeg"><button data-v="sentence">Sentence</button><button data-v="paragraph">Paragraph</button></div></div>
+      <div class="row stack"><span>Pause between sentences <em id="gapLabel">80 ms</em></span><input type="range" id="gapRange" min="50" max="500" step="10" value="80" aria-label="Pause between sentences"></div>
+    </div>
+
+    <div class="sec">Reading</div>
+    <div class="grp">
+      <div class="row stack"><span>Text size</span><div class="sizebar"><b class="small">A</b><input type="range" id="fontSizeRange" min="14" max="30" step="1" value="19" aria-label="Text size"><b class="big">A</b></div></div>
+      <div class="row stack"><span>Font</span></div>
+      <div class="fonts" data-fonts></div>
+      <div class="row"><span>Theme</span><div class="seg" id="themeSeg"><button data-v="paper">Paper</button><button data-v="dark">Dark</button><button data-v="auto">Auto</button></div></div>
+      <div class="row"><span>Follow along<span class="sub">Keep the sentence being read in view</span></span><label class="sw"><input type="checkbox" id="followToggle"><span class="tr"></span><span class="th"></span></label></div>
+      <div class="row"><span>Fade text already read</span><label class="sw"><input type="checkbox" id="fadeToggle"><span class="tr"></span><span class="th"></span></label></div>
+    </div>
+
+    <div class="sec">Words</div>
+    <div class="grp">
+      <div class="row"><span>Filter strong language<span class="sub">Muted in speech, masked on screen</span></span><label class="sw"><input type="checkbox" id="filterToggle"><span class="tr"></span><span class="th"></span></label></div>
+      <button class="row" id="wordsRow"><span>Words to filter</span><span class="val" id="wordsVal">none added</span></button>
+      <button class="row" id="pronRow"><span>Pronunciation rules</span><span class="val" id="pronVal">0 rules</span></button>
+    </div>
+
+    <div class="sec">Voice engine</div>
+    <div class="grp">
+      <div class="row"><span>Voices run</span><div class="seg" id="runSeg"><button data-v="server">On a server</button><button data-v="device">On this device</button></div></div>
+      <div class="row"><span>Engine</span><select id="engineSelect" class="native-select"><option value="kokoro">Kokoro</option><option value="piper">Piper</option></select></div>
+      <button class="row" id="serverRow"><span>Voice server<span class="sub" id="serverSub"></span></span><span class="val" id="serverVal">Set up</span></button>
+      <p class="foot" id="engineStatusSettings"></p>
+    </div>
+
+    <div class="sec">Library and storage</div>
+    <div class="grp">
+      <button class="row" id="shelvesRow"><span>Shelves</span><span class="val" id="shelvesVal">0</span></button>
+      <div class="row"><span>Storage used<span class="sub" id="storageSub">Books and voice models on this device</span></span><span class="val noarrow" id="storageVal">—</span></div>
+      <button class="row" id="persistRow"><span>Keep data when storage is low<span class="sub">Asks the browser not to clear this app</span></span><span class="val noarrow" id="persistVal">—</span></button>
+      <button class="row" id="clearAudioRow"><span>Clear prepared audio<span class="sub">Frees memory; nothing else is lost</span></span></button>
+    </div>
+
+    <div class="sec">About</div>
+    <div class="grp">
+      <div class="row"><span>Lamplight Reader</span><span class="val noarrow">2.0</span></div>
+      <div class="row stack"><span>Privacy</span><span class="sub">Books, positions and settings stay on this device. Nothing leaves it except the text sent to a voice server you set up yourself.</span></div>
+      <div class="row stack"><span>Credits</span><span class="sub">Kokoro and Piper for speech, pdf.js for PDFs, JSZip for EPUBs. MIT licence.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Sheets ================= -->
+<div class="sheet hidden" id="tocSheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3>Contents</h3><button class="x" data-close="tocSheet" aria-label="Close">✕</button></div>
+  <div class="grp" id="tocList"></div>
+</div></div>
+
+<div class="sheet hidden" id="voiceSheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3>Voice &amp; speed</h3><button class="x" data-close="voiceSheet" aria-label="Close">✕</button></div>
+  <div class="grp">
+    <div class="chips" id="speedChips"><button data-sp="0.8">0.8×</button><button data-sp="1">1.0×</button><button data-sp="1.2">1.2×</button><button data-sp="1.5">1.5×</button><button data-sp="2">2.0×</button></div>
+    <div class="row stack"><span>Fine speed <em id="rateLabel">1.00×</em></span><input type="range" id="rateSlider" min="0.6" max="2" step="0.05" value="1" aria-label="Speed"></div>
+  </div>
+  <div class="sheet-tools"><button class="chip" id="sampleVoiceBtn"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 8,19 19,12"/></svg> Hear the selected voice</button><button class="chip" id="refreshVoicesBtn">Refresh list</button></div>
+  <div class="grp" id="voiceList"><div class="row"><span class="sub">Loading voices…</span></div></div>
+  <p class="foot" id="voiceSheetStatus"></p>
+</div></div>
+
+<div class="sheet hidden" id="displaySheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3>Display</h3><button class="x" data-close="displaySheet" aria-label="Close">✕</button></div>
+  <div class="grp">
+    <div class="row stack"><span>Text size</span><div class="sizebar"><b class="small">A</b><input type="range" id="fontSizeRange2" min="14" max="30" step="1" value="19" aria-label="Text size"><b class="big">A</b></div></div>
+    <div class="row stack"><span>Font</span></div>
+    <div class="fonts" data-fonts></div>
+    <div class="row"><span>Theme</span><div class="seg" id="themeSeg2"><button data-v="paper">Paper</button><button data-v="dark">Dark</button><button data-v="auto">Auto</button></div></div>
+    <div class="row"><span>Follow along<span class="sub">Keep the sentence being read in view</span></span><label class="sw"><input type="checkbox" id="followToggle2"><span class="tr"></span><span class="th"></span></label></div>
+    <div class="row"><span>Fade text already read</span><label class="sw"><input type="checkbox" id="fadeToggle2"><span class="tr"></span><span class="th"></span></label></div>
+  </div>
+</div></div>
+
+<div class="sheet hidden" id="bookSheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3 id="bookSheetTitle">Book</h3><button class="x" data-close="bookSheet" aria-label="Close">✕</button></div>
+  <div class="grp"><div class="inl"><input id="bookNameInput" type="text" aria-label="Title"><button id="bookRenameBtn">Rename</button></div></div>
+  <div class="sec">Shelves</div>
+  <div class="grp" id="bookShelves"></div>
+  <div class="grp">
+    <button class="row" id="bookRestartBtn"><span>Start over from the beginning</span></button>
+    <button class="row danger" id="bookRemoveBtn"><span>Remove from library</span></button>
+  </div>
+</div></div>
+
+<div class="sheet hidden" id="shelvesSheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3>Shelves</h3><button class="x" data-close="shelvesSheet" aria-label="Close">✕</button></div>
+  <div class="grp" id="shelfList"></div>
+  <div class="grp"><div class="inl"><input id="newShelfInput" type="text" placeholder="New shelf, e.g. History"><button id="addShelfBtn">Add</button></div></div>
+  <p class="foot">A book can sit on several shelves. "Finished" fills itself when a book reaches the end.</p>
+</div></div>
+
+<div class="sheet hidden" id="wordsSheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3>Words to filter</h3><button class="x" data-close="wordsSheet" aria-label="Close">✕</button></div>
+  <div class="grp"><div class="row stack"><span>Extra words, separated by commas</span><textarea id="filterWords" placeholder="e.g. wordone, wordtwo"></textarea></div></div>
+  <p class="foot">Added to the built-in list. Matched words are muted in speech and masked on screen, in every book.</p>
+</div></div>
+
+<div class="sheet hidden" id="pronSheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3>Pronunciation</h3><button class="x" data-close="pronSheet" aria-label="Close">✕</button></div>
+  <div class="grp" id="pronunciationGroup"></div>
+  <div class="grp">
+    <div class="row stack">
+      <span>Add a rule</span>
+      <div class="inl nopad"><input type="text" id="pronFindInput" placeholder="As written (e.g. Ludger)"><input type="text" id="pronReplaceInput" placeholder="Say instead (blank = skip)"></div>
+      <label class="check"><input type="checkbox" id="pronMatchCase"> Match case</label>
+      <div class="inl nopad"><button class="chip" id="pronPreviewBtn"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 8,19 19,12"/></svg> Preview</button><button class="btn" id="pronAddBtn">Add rule</button></div>
+    </div>
+  </div>
+  <p class="foot">Fixes names or words the voice gets wrong, wherever they appear. Speech only; the text on screen is unchanged.</p>
+</div></div>
+
+<div class="sheet hidden" id="serverSheet"><div class="panel">
+  <div class="handle"></div>
+  <div class="ph"><h3>Voice server</h3><button class="x" data-close="serverSheet" aria-label="Close">✕</button></div>
+  <div class="grp">
+    <div class="row stack"><span>Server address</span><input type="text" id="serverUrlInput" class="text-input" placeholder="https://your-space.hf.space/your-key"></div>
+    <button class="row" id="serverTestBtn"><span>Connect now</span><span class="val" id="serverTestVal"></span></button>
+  </div>
+  <p class="foot">Your Mac over Tailscale, or a Hugging Face Space set up from the server folder in the project. The book's text is sent there to be turned into speech; nothing is stored.</p>
+</div></div>
 
 <div class="connect-toast hidden" id="connectToast" role="status" aria-live="polite">
   <div class="connect-icon" id="connectIcon">
@@ -239,6 +231,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script type="module" src="kokoro-engine.js"></script>
 <script type="module" src="piper-engine.js"></script>
+<script src="text.js"></script>
+<script src="book.js"></script>
+<script src="store.js"></script>
+<script src="voice.js"></script>
+<script src="player.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
