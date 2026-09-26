@@ -318,7 +318,7 @@ async function parsePdf(buf){
 // Read separately from parseEpub so the parser above stays as it was. Returns
 // whatever it can find; every field is optional.
 async function readEpubMeta(buf){
-  const meta = { title: '', author: '', subjects: [], cover: null };
+  const meta = { title: '', author: '', subjects: [], cover: null, series: '', seriesIndex: null };
   try{
     const zip = await JSZip.loadAsync(buf);
     const containerXml = await zip.file('META-INF/container.xml').async('string');
@@ -330,6 +330,23 @@ async function readEpubMeta(buf){
     meta.title = text('title');
     meta.author = text('creator');
     meta.subjects = Array.from(opfDoc.getElementsByTagNameNS('*', 'subject')).map(n => n.textContent.trim()).filter(Boolean);
+
+    // Series: Calibre writes <meta name="calibre:series"> and calibre:series_index;
+    // EPUB 3 uses a belongs-to-collection entry refined as a series with a group-position.
+    const metas = Array.from(opfDoc.getElementsByTagNameNS('*', 'meta'));
+    const byName = name => { const m = metas.find(x => (x.getAttribute('name') || '').toLowerCase() === name); return m ? (m.getAttribute('content') || '').trim() : ''; };
+    meta.series = byName('calibre:series');
+    meta.seriesIndex = parseFloat(byName('calibre:series_index'));
+    if(!meta.series){
+      const coll = metas.find(x => (x.getAttribute('property') || '') === 'belongs-to-collection');
+      if(coll){
+        const id = coll.getAttribute('id');
+        const refine = prop => { const r = metas.find(x => x.getAttribute('refines') === '#' + id && x.getAttribute('property') === prop); return r ? r.textContent.trim() : ''; };
+        const type = refine('collection-type');
+        if(!type || type === 'series'){ meta.series = coll.textContent.replace(/\s+/g, ' ').trim(); meta.seriesIndex = parseFloat(refine('group-position')); }
+      }
+    }
+    if(isNaN(meta.seriesIndex)) meta.seriesIndex = null;
 
     // The cover is either the manifest item marked properties="cover-image" (EPUB 3)
     // or the item named by <meta name="cover" content="id"> (EPUB 2).
@@ -350,5 +367,19 @@ async function readEpubMeta(buf){
       }
     }
   } catch(err){ console.warn('EPUB metadata unavailable:', err); }
+  return meta;
+}
+
+// Title and author from a PDF's own document information, when the publisher filled it in.
+async function readPdfMeta(buf){
+  const meta = { title: '', author: '', subjects: [], cover: null, series: '', seriesIndex: null };
+  try{
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const info = (await pdf.getMetadata()).info || {};
+    meta.title = (info.Title || '').trim();
+    meta.author = (info.Author || '').trim();
+    if(info.Subject) meta.subjects = [String(info.Subject).trim()];
+    pdf.destroy();
+  } catch(err){ console.warn('PDF metadata unavailable:', err); }
   return meta;
 }

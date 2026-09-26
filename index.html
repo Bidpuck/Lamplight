@@ -34,9 +34,21 @@
       <svg class="drop-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V6a2 2 0 0 1 2-2h8.5L20 8.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2.5Z"/><path d="M14 4v4.5H18.5"/><path d="M9 13.5l3-3 3 3M12 10.5V17"/></svg>
       <h3>Add a book</h3>
       <p>Drop an EPUB or PDF here, or choose a file. Nothing is uploaded anywhere; the book stays on this device.</p>
-      <label class="btn" for="fileInput">Choose a file</label>
-      <input type="file" id="fileInput" accept=".epub,.pdf">
+      <label class="btn" for="fileInput">Choose files</label>
+      <input type="file" id="fileInput" accept=".epub,.pdf" multiple>
       <div class="status" id="loadStatus"></div>
+    </div>
+    <div class="folder" id="folderBlock">
+      <div class="folder-text">
+        <b id="folderTitle">Or keep a folder in step</b>
+        <span id="folderSub">New EPUBs and PDFs in it, and in its subfolders, are added to the library on their own. New books arrive without a shelf; put them where you like.</span>
+      </div>
+      <div class="folder-actions">
+        <button class="chip" id="folderPickBtn">Choose a folder</button>
+        <button class="chip hidden" id="folderScanBtn">Check now</button>
+        <button class="chip hidden" id="folderForgetBtn">Stop watching</button>
+      </div>
+      <input type="file" id="folderInput" webkitdirectory multiple class="hidden">
     </div>
   </div>
 </section>
@@ -111,6 +123,8 @@
     <div class="sec">Library and storage</div>
     <div class="grp">
       <button class="row" id="shelvesRow"><span>Shelves</span><span class="val" id="shelvesVal">0</span></button>
+      <div class="row"><span>Group books by series</span><label class="sw"><input type="checkbox" id="seriesToggle"><span class="tr"></span><span class="th"></span></label></div>
+      <button class="row" id="folderRow"><span>Watched folder<span class="sub" id="folderRowSub">New EPUBs and PDFs are added on their own</span></span><span class="val" id="folderVal">None</span></button>
       <div class="row"><span>Storage used<span class="sub" id="storageSub">Books and voice models on this device</span></span><span class="val noarrow" id="storageVal">—</span></div>
       <button class="row" id="persistRow"><span>Keep data when storage is low<span class="sub">Asks the browser not to clear this app</span></span><span class="val noarrow" id="persistVal">—</span></button>
       <button class="row" id="clearAudioRow"><span>Clear prepared audio<span class="sub">Frees memory; nothing else is lost</span></span></button>
@@ -172,6 +186,8 @@
   <div class="handle"></div>
   <div class="ph"><h3 id="bookSheetTitle">Book</h3><button class="x" data-close="bookSheet" aria-label="Close">✕</button></div>
   <div class="grp"><div class="inl"><input id="bookNameInput" type="text" aria-label="Title"><button id="bookRenameBtn">Rename</button></div></div>
+  <div class="sec">Series</div>
+  <div class="grp"><div class="inl"><input id="bookSeriesInput" type="text" placeholder="Series name" aria-label="Series name"><input id="bookSeriesIndexInput" type="number" step="0.5" min="0" placeholder="No." aria-label="Number in series" style="flex:0 0 72px;min-width:0"><button id="bookSeriesBtn">Save</button></div></div>
   <div class="sec">Shelves</div>
   <div class="grp" id="bookShelves"></div>
   <div class="grp">

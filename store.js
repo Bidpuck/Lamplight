@@ -5,14 +5,42 @@
 
 const LIBRARY_DB = 'lamplight-reader';
 const LIBRARY_STORE = 'files';
+const KV_STORE = 'kv'; // small things that don't fit localStorage, such as a folder handle
 
 function openLibraryDB(){
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(LIBRARY_DB, 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(LIBRARY_STORE, { keyPath: 'id' }); };
+    const req = indexedDB.open(LIBRARY_DB, 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if(!db.objectStoreNames.contains(LIBRARY_STORE)) db.createObjectStore(LIBRARY_STORE, { keyPath: 'id' });
+      if(!db.objectStoreNames.contains(KV_STORE)) db.createObjectStore(KV_STORE);
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+async function kvGet(key){
+  try{
+    const db = await openLibraryDB();
+    try{
+      return await new Promise((resolve, reject) => {
+        const req = db.transaction(KV_STORE, 'readonly').objectStore(KV_STORE).get(key);
+        req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+      });
+    } finally { db.close(); }
+  } catch(err){ console.warn('Could not read', key, err); return undefined; }
+}
+async function kvSet(key, value){
+  try{
+    const db = await openLibraryDB();
+    try{
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(KV_STORE, 'readwrite');
+        if(value === undefined) tx.objectStore(KV_STORE).delete(key); else tx.objectStore(KV_STORE).put(value, key);
+        tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+      });
+    } finally { db.close(); }
+  } catch(err){ console.warn('Could not store', key, err); }
 }
 
 // Runs one read-write transaction against the library store and resolves when it
@@ -55,6 +83,13 @@ async function saveBookToLibrary(file, buf, extra){
           shelves: old.shelves || extra.shelves || [],
           title: extra.title || old.title || '',
           author: extra.author || old.author || '',
+          // A series set by hand is kept as is; otherwise a value already stored wins,
+          // and an empty one is filled from the file's metadata.
+          series: old.seriesManual ? (old.series || '') : (old.series || extra.series || ''),
+          seriesIndex: old.seriesManual ? (old.seriesIndex != null ? old.seriesIndex : null)
+                       : (old.series ? (old.seriesIndex != null ? old.seriesIndex : null) : (extra.seriesIndex != null ? extra.seriesIndex : null)),
+          seriesManual: !!old.seriesManual,
+          sourcePath: extra.sourcePath || old.sourcePath || '',
           cover: extra.cover !== undefined ? extra.cover : (old.cover || null),
           totalChars: extra.totalChars || old.totalChars || 0,
           chapterCount: extra.chapterCount || old.chapterCount || 0,
@@ -183,6 +218,7 @@ async function exportBackupBlob(){
     books: books.map(rec => ({
       id: rec.id, name: rec.name, type: rec.type || '', displayName: rec.displayName || '', title: rec.title || '',
       author: rec.author || '', shelves: rec.shelves || [], totalChars: rec.totalChars || 0, chapterCount: rec.chapterCount || 0,
+      series: rec.series || '', seriesIndex: rec.seriesIndex != null ? rec.seriesIndex : null, seriesManual: !!rec.seriesManual,
       progress: rec.progress || null, savedAt: rec.savedAt || 0,
       file: rec.data ? 'books/' + rec.id : null,
       cover: rec.cover ? 'covers/' + rec.id + (rec.cover.type === 'image/png' ? '.png' : '.jpg') : null,
@@ -240,11 +276,15 @@ async function importBackup(file){
       const dataEntry = b.file && zip.file(b.file);
       if(!dataEntry) continue;
       const data = await dataEntry.async('arraybuffer');
-      await withLibraryStore('readwrite', store => store.put({
+      // Series fields are left out when the backup predates them, so the file's own
+      // metadata can fill them in the next time the book is saved.
+      const record = {
         id: b.id, name: b.name, type: b.type, data, savedAt: b.savedAt || Date.now(),
         displayName: b.displayName || undefined, title: b.title || '', author: b.author || '', shelves: b.shelves || [],
         cover, totalChars: b.totalChars || 0, chapterCount: b.chapterCount || 0, progress: b.progress || null
-      }));
+      };
+      if(b.series !== undefined) Object.assign(record, { series: b.series || '', seriesIndex: b.seriesIndex != null ? b.seriesIndex : null, seriesManual: !!b.seriesManual });
+      await withLibraryStore('readwrite', store => store.put(record));
       out.booksAdded++;
     } else {
       const merged = {};
@@ -253,6 +293,7 @@ async function importBackup(file){
       if(!local.displayName && b.displayName) merged.displayName = b.displayName;
       if(!local.title && b.title) merged.title = b.title;
       if(!local.author && b.author) merged.author = b.author;
+      if(!local.series && !local.seriesManual && b.series){ merged.series = b.series; merged.seriesIndex = b.seriesIndex != null ? b.seriesIndex : null; merged.seriesManual = !!b.seriesManual; }
       if(!local.cover && cover) merged.cover = cover;
       if(b.progress && (!local.progress || (b.progress.at || 0) > (local.progress.at || 0))) merged.progress = b.progress;
       await updateLibraryBook(b.id, merged);
@@ -261,3 +302,10 @@ async function importBackup(file){
   }
   return out;
 }
+
+// ---------------- Books removed on purpose ----------------
+// A watched folder must not bring back a book that was deleted while its file is
+// still there. Deleting records the id; adding the same file by hand clears it.
+async function dismissedBooks(){ const list = await kvGet('dismissedBooks'); return Array.isArray(list) ? list : []; }
+async function dismissBook(id){ const list = await dismissedBooks(); if(!list.includes(id)){ list.push(id); await kvSet('dismissedBooks', list); } }
+async function undismissBook(id){ const list = await dismissedBooks(); if(list.includes(id)) await kvSet('dismissedBooks', list.filter(x => x !== id)); }

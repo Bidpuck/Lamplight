@@ -13,6 +13,8 @@ A private, local audiobook player for your browser. Upload an EPUB or PDF and it
 - **Text size, five fonts, paper or dark theme**
 - **Optional language filter** and a pronunciation dictionary for names the voice gets wrong
 - **Lock-screen playback controls** with the book's cover
+- **Watched folder** — on Chrome or Edge for desktop, choose a folder once and every new EPUB or PDF in it, or in its subfolders, is added to the library when the app opens (and on demand with Check now). New books arrive without a shelf. Other browsers can add a folder's contents when it is picked; iPhone adds files through the Files picker, several at a time
+- **Series** — books that belong to a series (from the EPUB's own series metadata, or set by hand in the book's ⋯ menu) sit together in the Library under a series header, in order; a switch in Settings turns the grouping off
 - **Search within the book** from the Contents sheet; tap a match to start reading there
 - **Back up and sync** — one file with every book, its shelves and your place in it. Save it to iCloud Drive or Google Drive and restore it on your other device; restoring merges, newer positions win, nothing is deleted
 - **Open in Lamplight** — once installed to the home screen on Android or as a desktop app, a book can be shared or opened straight into it. iPhone doesn't offer this to web apps yet, so there the Add a book button and the Files app remain the way in
