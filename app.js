@@ -277,7 +277,8 @@ el('bookSeriesBtn').addEventListener('click', async () => {
   rec.series = el('bookSeriesInput').value.trim();
   const n = parseFloat(el('bookSeriesIndexInput').value);
   rec.seriesIndex = rec.series && !isNaN(n) ? n : null;
-  await updateLibraryBook(rec.id, { series: rec.series, seriesIndex: rec.seriesIndex });
+  rec.seriesManual = true;
+  await updateLibraryBook(rec.id, { series: rec.series, seriesIndex: rec.seriesIndex, seriesManual: true });
   Library.renderBooks();
 });
 el('bookRestartBtn').addEventListener('click', async () => {
@@ -292,6 +293,7 @@ el('bookRemoveBtn').addEventListener('click', async () => {
   const rec = Library.editing; if(!rec) return;
   if(Reader.book && Reader.book.id === rec.id){ Player.unload(); Reader.book = null; }
   await deleteBookFromLibrary(rec.id);
+  await dismissBook(rec.id); // so a watched folder doesn't bring it straight back
   closeSheet('bookSheet'); Library.refresh();
 });
 el('addShelfBtn').addEventListener('click', () => {
@@ -350,6 +352,7 @@ const Folder = {
     if(!ok){ this.render('Access was not allowed. Tap Check now to try again.'); return; }
     this.scanning = true;
     const known = new Set(Library.books.map(b => b.id));
+    (await dismissedBooks()).forEach(id => known.add(id)); // deleted on purpose: leave them out
     let added = 0, seen = 0;
     try{
       for await (const f of this.walk(this.handle, '')){
@@ -357,7 +360,7 @@ const Folder = {
         const id = f.path.split('/').pop().trim().toLowerCase();
         if(known.has(id)) continue;
         this.render('Adding ' + f.path + ' …');
-        try{ if(await importFile(await f.handle.getFile(), { sourcePath: f.path })){ known.add(id); added++; } }
+        try{ if(await importFile(await f.handle.getFile(), { sourcePath: f.path, fromFolder: true })){ known.add(id); added++; } }
         catch(err){ console.error('Could not add', f.path, err); }
       }
       settingSet('folderLastScan', Date.now());
@@ -371,11 +374,12 @@ const Folder = {
     const list = Array.from(files || []).filter(f => /\.(epub|pdf)$/i.test(f.name));
     if(!list.length){ this.render('No EPUB or PDF files in that folder.'); return; }
     const known = new Set(Library.books.map(b => b.id));
+    (await dismissedBooks()).forEach(id => known.add(id));
     let added = 0;
     for(const f of list){
       if(known.has(bookIdFor(f))) continue;
       this.render('Adding ' + f.name + ' …');
-      try{ if(await importFile(f, { sourcePath: f.webkitRelativePath || f.name })){ known.add(bookIdFor(f)); added++; } } catch(err){ console.error(err); }
+      try{ if(await importFile(f, { sourcePath: f.webkitRelativePath || f.name, fromFolder: true })){ known.add(bookIdFor(f)); added++; } } catch(err){ console.error(err); }
     }
     if(added) await Library.refresh();
     this.render(added ? 'Added ' + added + (added === 1 ? ' new book' : ' new books') + ' from that folder.' : 'No new books in that folder.');
@@ -417,6 +421,7 @@ async function importFile(file, opts){
   if(!/\.(epub|pdf)$/.test(name)) return false;
   const buf = await file.arrayBuffer();
   const meta = name.endsWith('.epub') ? await readEpubMeta(buf) : await readPdfMeta(buf.slice(0));
+  if(!opts.fromFolder) await undismissBook(bookIdFor(file));
   await saveBookToLibrary(file, buf, {
     title: meta.title || '', author: meta.author || '', cover: meta.cover || undefined,
     series: meta.series || '', seriesIndex: meta.seriesIndex, sourcePath: opts.sourcePath || '',
@@ -466,6 +471,7 @@ async function handleFile(file, opts){
     const cover = meta.cover || (rec && rec.cover) || null;
     const progressKey = progressKeyFor(fileTitle, file.size);
     const saved = loadProgressFor(progressKey);
+    undismissBook(bookIdFor(file)); // opened by hand, so it is wanted again
     const totalChars = chapters.reduce((a, ch) => a + ch.sentences.reduce((b, s) => b + s.length, 0), 0);
 
     if(Reader.book && Reader.book.artworkUrl) URL.revokeObjectURL(Reader.book.artworkUrl);
