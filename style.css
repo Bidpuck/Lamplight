@@ -400,6 +400,45 @@
   .ios-switch input:checked + .track{ background: var(--lamp); }
   .ios-switch input:checked ~ .thumb{ transform: translateX(18px); }
 
+  /* ---------- Voice server connection popup ---------- */
+  .connect-toast{
+    position: fixed; z-index: 60;
+    top: calc(env(safe-area-inset-top, 0px) + 64px);
+    left: 50%; transform: translateX(-50%);
+    width: calc(100% - 32px); max-width: 420px;
+    display:flex; align-items:flex-start; gap: 12px;
+    padding: 14px 16px;
+    background: var(--card); color: var(--ink);
+    border-radius: 16px;
+    box-shadow: 0 10px 34px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.08);
+    transition: opacity .25s ease, transform .25s ease;
+  }
+  .connect-toast.fading{ opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  body.dark .connect-toast{ box-shadow: 0 10px 34px rgba(0,0,0,0.5); }
+  .connect-icon{
+    flex-shrink:0; width: 28px; height: 28px; border-radius: 50%;
+    display:flex; align-items:center; justify-content:center;
+    color: var(--lamp-dark); background: rgba(63,93,72,0.12);
+  }
+  body.dark .connect-icon{ background: rgba(111,163,126,0.18); }
+  .connect-spinner{
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2.4px solid currentColor; border-right-color: transparent;
+    animation: connect-spin .8s linear infinite;
+  }
+  @keyframes connect-spin{ to{ transform: rotate(360deg); } }
+  .connect-check, .connect-alert{ display:none; }
+  .connect-toast.is-ready .connect-spinner, .connect-toast.is-error .connect-spinner{ display:none; }
+  .connect-toast.is-ready .connect-check{ display:block; }
+  .connect-toast.is-error .connect-alert{ display:block; }
+  .connect-toast.is-error .connect-icon{ color: #B4512F; background: rgba(180,81,47,0.12); }
+  body.dark .connect-toast.is-error .connect-icon{ color: #E08A6A; background: rgba(224,138,106,0.16); }
+  .connect-body{ flex:1; min-width:0; }
+  .connect-title{ font-weight: 600; font-size: 15px; line-height: 28px; }
+  .connect-detail{ font-size: 13.5px; line-height: 1.4; color: var(--ink-soft); overflow-wrap: anywhere; }
+  .connect-detail:empty{ display:none; }
+  .connect-actions{ display:flex; gap: 8px; margin-top: 10px; }
+
   /* ---------- Dark mode ---------- */
   body.dark{
     color-scheme: dark;

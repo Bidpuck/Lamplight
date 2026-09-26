@@ -236,6 +236,101 @@ async function serverErrorFrom(res, path){
   return new Error(detail ? 'Voice server: ' + detail : 'Voice server answered with HTTP ' + res.status + ' for ' + path + '.');
 }
 
+// ---------------- Voice server connection popup ----------------
+// Shown while the app is fetching the server's voice list — the step that proves the
+// server is reachable and ready — and cleared once voices are in. A Hugging Face Space
+// that has gone to sleep takes a minute or two to wake, so this keeps retrying (with a
+// visible timer) instead of giving up after one timed-out request.
+const SERVER_WAKE_MAX_MS = 4 * 60 * 1000;
+const SERVER_RETRY_DELAY_MS = 4000;
+let connectToastTicker = null, connectToastHideTimer = null;
+
+function setConnectToast(state, title, detail){
+  const toast = el('connectToast');
+  clearTimeout(connectToastHideTimer);
+  toast.classList.remove('hidden', 'fading', 'is-ready', 'is-error');
+  if(state !== 'connecting') toast.classList.add('is-' + state);
+  el('connectTitle').textContent = title;
+  el('connectDetail').textContent = detail || '';
+  el('connectActions').classList.toggle('hidden', state !== 'error');
+}
+
+function hideConnectToast(delayMs){
+  clearTimeout(connectToastHideTimer);
+  connectToastHideTimer = setTimeout(() => {
+    const toast = el('connectToast');
+    toast.classList.add('fading');
+    connectToastHideTimer = setTimeout(() => toast.classList.add('hidden'), 260);
+  }, delayMs || 0);
+}
+
+el('connectClose').addEventListener('click', () => hideConnectToast(0));
+el('connectRetry').addEventListener('click', async () => {
+  kokoroServerVoicesCache = null;
+  piperServerVoicesCache = null;
+  setEngineStatus('');
+  await refreshVoiceListForCurrentEngine();
+});
+
+// Fetches a server voice list, retrying while the server is unreachable or waking.
+// Errors the server states plainly (wrong key, Kokoro-only server, ...) stop at once.
+// Concurrent callers for the same list share one attempt, so there's only ever one popup.
+const serverVoicesInFlight = new Map();
+function fetchServerVoices(path){
+  if(serverVoicesInFlight.has(path)) return serverVoicesInFlight.get(path);
+  const attempt = (async () => {
+    const started = Date.now();
+    const elapsed = () => Math.round((Date.now() - started) / 1000);
+    setConnectToast('connecting', 'Connecting to voice server…', '');
+    clearInterval(connectToastTicker);
+    connectToastTicker = setInterval(() => {
+      if(Date.now() - started < 6000) return;
+      el('connectTitle').textContent = 'Waking up the voice server…';
+      el('connectDetail').textContent = 'This can take a minute or two after it has been idle. (' + elapsed() + 's)';
+    }, 1000);
+    try{
+      let lastErr = null;
+      while(true){
+        if(!useServer) throw new Error('Local server was turned off.');
+        let res = null;
+        try{
+          res = await serverFetch(path, {}, SERVER_VOICES_TIMEOUT_MS);
+        } catch(err){ lastErr = err; } // unreachable or timed out: worth retrying
+        if(res && res.ok){
+          try{
+            const data = await res.json();
+            clearInterval(connectToastTicker);
+            const count = voiceIdsFrom(data.voices).length;
+            setConnectToast('ready', 'Voice server ready', count + ' voices available.');
+            hideConnectToast(1400);
+            return data.voices;
+          } catch(err){
+            lastErr = new Error('The voice server sent back something other than a voice list.'); // e.g. a "starting up" page
+          }
+        } else if(res && (res.status >= 500 || res.status === 429)){
+          lastErr = await serverErrorFrom(res, path); // still starting up, or overloaded
+        } else if(res){
+          throw await serverErrorFrom(res, path); // a definite answer; retrying won't change it
+        }
+        if(Date.now() - started > SERVER_WAKE_MAX_MS) throw lastErr;
+        await new Promise(resolve => setTimeout(resolve, SERVER_RETRY_DELAY_MS));
+      }
+    } catch(err){
+      clearInterval(connectToastTicker);
+      if(useServer){
+        setConnectToast('error', "Couldn't connect to the voice server", err && err.message ? err.message : String(err));
+      } else {
+        hideConnectToast(0);
+      }
+      throw err;
+    } finally {
+      serverVoicesInFlight.delete(path);
+    }
+  })();
+  serverVoicesInFlight.set(path, attempt);
+  return attempt;
+}
+
 // The server's voices list may come back as an array of ids or as an object keyed by id.
 function voiceIdsFrom(voices){
   if(Array.isArray(voices)) return voices.map(v => typeof v === 'string' ? v : (v && (v.id || v.name))).filter(Boolean);
@@ -260,10 +355,7 @@ let kokoroServerVoicesCache = null;
 const kokoroServerEngine = {
   async ensureLoaded(){
     if(kokoroServerVoicesCache) return true;
-    const res = await serverFetch('/kokoro/voices', {}, SERVER_VOICES_TIMEOUT_MS);
-    if(!res.ok) throw await serverErrorFrom(res, '/kokoro/voices');
-    const data = await res.json();
-    kokoroServerVoicesCache = voiceIdsFrom(data.voices);
+    kokoroServerVoicesCache = voiceIdsFrom(await fetchServerVoices('/kokoro/voices'));
     return true;
   },
   isLoaded(){ return !!kokoroServerVoicesCache; },
@@ -274,10 +366,7 @@ const kokoroServerEngine = {
 let piperServerVoicesCache = null;
 const piperServerEngine = {
   async listVoices(){
-    const res = await serverFetch('/piper/voices', {}, SERVER_VOICES_TIMEOUT_MS);
-    if(!res.ok) throw await serverErrorFrom(res, '/piper/voices');
-    const data = await res.json();
-    piperServerVoicesCache = data.voices || [];
+    piperServerVoicesCache = (await fetchServerVoices('/piper/voices')) || [];
     return piperServerVoicesCache;
   },
   async storedVoices(){
@@ -360,6 +449,7 @@ el('useServerToggle').addEventListener('change', async () => {
   applyEngineBackends();
   neuralAudioCache.clear();
   updateServerRowsVisibility();
+  if(!useServer) hideConnectToast(0);
   await refreshVoiceListForCurrentEngine();
 });
 
