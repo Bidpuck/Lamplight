@@ -56,6 +56,7 @@ const Player = {
 
   // ---------------- Loading a book ----------------
   load(chapters, book, pos){
+    if(this.book) this.saveSummary(true); // the outgoing book's card keeps its latest progress
     this.stopAudio();
     this.chapters = chapters;
     this.book = book;

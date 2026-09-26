@@ -455,6 +455,7 @@ async function compressSilence(blob, opts){
     return out;
   } catch(err){
     console.warn('Silence compression failed, using original audio:', err);
+    if(opts.offsetsSec) blob.sentenceOffsets = opts.offsetsSec.slice(); // untrimmed, so the originals still apply
     return blob;
   }
 }

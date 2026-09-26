@@ -447,10 +447,11 @@ const Reader = {
 Player.on((type, detail) => {
   if(type === 'chapter'){ if(!el('viewReader').classList.contains('hidden')) Reader.renderChapter(); }
   if(type === 'position'){
+    const chapterChanged = Reader.renderedCh !== Player.ch; // highlight() re-renders, so read this first
     Reader.highlight();
     if(document.hidden) return; // catch up on 'visible' instead
     if(Reader.suppressScrollOnce){ Reader.suppressScrollOnce = false; return; }
-    if(Display.follow) Reader.followScroll(!!(detail && detail.jump && Reader.renderedCh !== Player.ch));
+    if(Display.follow) Reader.followScroll(!!(detail && detail.jump && chapterChanged));
     else el('returnPill').classList.toggle('hidden', Reader.curVisible());
   }
   if(type === 'visible'){ Reader.highlight(); if(Display.follow) Reader.followScroll(true); else Reader.onUserScroll(); }
@@ -574,11 +575,14 @@ el('filterToggle').addEventListener('change', () => {
   if(Player.chapters.length){ Reader.renderedCh = -1; Reader.highlight(); }
 });
 el('wordsRow').addEventListener('click', () => openSheet('wordsSheet'));
+// While typing, only the cache and the on-screen masking update; the audible restart
+// waits for the field to be left, so playback isn't interrupted on every keystroke.
 el('filterWords').addEventListener('input', () => {
   customBadWords = el('filterWords').value.split(',').map(w => w.trim()).filter(Boolean);
-  saveFilterSettings(); Player.clearAudio(); syncSettings();
+  saveFilterSettings(); Player.cache.clear(); syncSettings();
   if(Player.chapters.length){ Reader.renderedCh = -1; Reader.highlight(); }
 });
+el('filterWords').addEventListener('change', () => Player.clearAudio());
 
 // Pronunciation
 loadPronunciationRules();

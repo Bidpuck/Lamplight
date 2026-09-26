@@ -33,7 +33,7 @@ Nothing is ever uploaded anywhere. The book file, the voice model, and your read
 
 ## Known limitations
 
-- With Piper on a voice server, a paragraph is read as one clip. The highlight moves through it sentence by sentence using timings the server reports (an `X-Sentence-Offsets` header of seconds, one per sentence in the request's `sentences` list) or, for a server that doesn't report them, an estimate from sentence length
+- With Piper on a voice server, a paragraph is read as one clip. The highlight moves through it sentence by sentence using timings the server reports (an `X-Sentence-Offsets` header of seconds, one per sentence in the request's `sentences` list, which the server must also name in `Access-Control-Expose-Headers`) or, for a server that doesn't report them, an estimate from sentence length
 - PDF paragraph breaks are an approximation based on line spacing, since PDFs don't have real paragraph markup the way EPUBs do
 - DRM-protected EPUBs (from most bookstores) can't be opened, since the text itself is encrypted
 - Voice quality and speed depend on your device's hardware
