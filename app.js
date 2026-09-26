@@ -221,12 +221,20 @@ async function serverFetch(path, options, timeoutMs){
   } catch(err){
     const why = err && err.name === 'AbortError' ? 'no answer after ' + Math.round(timeoutMs/1000) + 's' : 'connection failed';
     throw new Error("Can't reach the voice server at " + serverUrl + ' (' + why + '). ' +
-      'Check that the Mac is awake, the server is running, and Tailscale is on for this device.');
+      'Check that the server is running and awake (a sleeping Hugging Face Space takes a minute or two to wake), ' +
+      'and for the Mac server that Tailscale is on for this device.');
   } finally {
     if(timer) clearTimeout(timer);
   }
 }
 const SERVER_VOICES_TIMEOUT_MS = 15000;
+
+// The server's own explanation (e.g. "Wrong access key") beats a bare status code.
+async function serverErrorFrom(res, path){
+  let detail = '';
+  try{ detail = (await res.json()).detail || ''; } catch(e){ /* not JSON */ }
+  return new Error(detail ? 'Voice server: ' + detail : 'Voice server answered with HTTP ' + res.status + ' for ' + path + '.');
+}
 
 // The server's voices list may come back as an array of ids or as an object keyed by id.
 function voiceIdsFrom(voices){
@@ -253,7 +261,7 @@ const kokoroServerEngine = {
   async ensureLoaded(){
     if(kokoroServerVoicesCache) return true;
     const res = await serverFetch('/kokoro/voices', {}, SERVER_VOICES_TIMEOUT_MS);
-    if(!res.ok) throw new Error('Voice server answered with HTTP ' + res.status + ' for /kokoro/voices.');
+    if(!res.ok) throw await serverErrorFrom(res, '/kokoro/voices');
     const data = await res.json();
     kokoroServerVoicesCache = voiceIdsFrom(data.voices);
     return true;
@@ -267,7 +275,7 @@ let piperServerVoicesCache = null;
 const piperServerEngine = {
   async listVoices(){
     const res = await serverFetch('/piper/voices', {}, SERVER_VOICES_TIMEOUT_MS);
-    if(!res.ok) throw new Error('Voice server answered with HTTP ' + res.status + ' for /piper/voices.');
+    if(!res.ok) throw await serverErrorFrom(res, '/piper/voices');
     const data = await res.json();
     piperServerVoicesCache = data.voices || [];
     return piperServerVoicesCache;
@@ -1478,7 +1486,7 @@ async function populatePiperVoiceSelect(){
     // Only the server engine throws here (the in-browser one catches its own errors).
     console.error(err);
     if(engine !== 'piper') return;
-    placeholder.textContent = 'No voices — server unreachable';
+    placeholder.textContent = 'No voices — see message below';
     setEngineStatus(err && err.message ? err.message : String(err));
     return;
   }
@@ -1595,7 +1603,7 @@ async function ensureKokoroReady(){
   } catch(err){
     console.error(err);
     if(useServer){
-      el('voiceSelect').innerHTML = '<option>No voices — server unreachable</option>';
+      el('voiceSelect').innerHTML = '<option>No voices — see message below</option>';
       setEngineStatus(err && err.message ? err.message : String(err));
     } else {
       setEngineStatus('Could not load the neural voice (needs internet the first time).');
