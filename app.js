@@ -135,48 +135,77 @@ const Library = {
       list.appendChild(empty);
       return;
     }
+    // Books of one series sit together under a header, in series order, at the spot
+    // where the most recently opened of them would have been.
+    const groupSeries = settingGet('groupSeries', '1') === '1';
+    const groups = new Map();
+    shown.forEach(b => { const key = (b.series || '').trim().toLowerCase(); if(key){ if(!groups.has(key)) groups.set(key, []); groups.get(key).push(b); } });
+    const rendered = new Set();
     shown.forEach(rec => {
-      const card = document.createElement('div'); card.className = 'book'; card.setAttribute('role', 'button'); card.tabIndex = 0;
-      const cover = document.createElement('div'); cover.className = 'cover';
-      const url = this.coverUrl(rec);
-      if(url){ const img = document.createElement('img'); img.src = url; img.alt = ''; cover.appendChild(img); cover.classList.add('has-img'); }
-      else cover.textContent = libraryBookTitle(rec);
-      card.appendChild(cover);
-
-      const body = document.createElement('div');
-      const t = document.createElement('div'); t.className = 't'; t.textContent = libraryBookTitle(rec); body.appendChild(t);
-      const a = document.createElement('div'); a.className = 'a'; a.textContent = rec.author || rec.name.replace(/\.(epub|pdf)$/i, ''); body.appendChild(a);
-
-      const p = rec.progress;
-      const fraction = p ? (p.finished ? 1 : p.fraction || 0) : 0;
-      const pr = document.createElement('div'); pr.className = 'pr';
-      pr.innerHTML = '<div class="bar"><i></i></div><span></span>';
-      pr.querySelector('i').style.width = Math.round(fraction * 100) + '%';
-      pr.querySelector('span').textContent = p ? (p.finished ? 'Done' : Math.round(fraction * 100) + '%') : 'New';
-      body.appendChild(pr);
-
-      const cont = document.createElement('div'); cont.className = 'cont';
-      if(p && p.finished) cont.textContent = 'Finished · tap to read again';
-      else if(p && p.chapterTitle) cont.textContent = 'Continue · ' + p.chapterTitle + (p.secLeft ? ' · ' + fmtLong(p.secLeft) + ' left' : '');
-      else if(rec.totalChars) cont.textContent = 'Start · about ' + fmtLong(rec.totalChars * Player.secPerCharNow());
-      else cont.textContent = 'Open';
-      body.appendChild(cont);
-
-      if(rec.shelves && rec.shelves.length){
-        const tags = document.createElement('div'); tags.className = 'tags';
-        rec.shelves.forEach(s => { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = s; tags.appendChild(tag); });
-        body.appendChild(tags);
+      if(rendered.has(rec.id)) return;
+      const key = (rec.series || '').trim().toLowerCase();
+      const grp = key ? groups.get(key) : null;
+      if(groupSeries && grp && grp.length > 1){
+        const head = document.createElement('div'); head.className = 'series-head';
+        const done = grp.filter(x => x.progress && x.progress.finished).length;
+        head.innerHTML = '<b></b><span></span>';
+        head.querySelector('b').textContent = rec.series.trim();
+        head.querySelector('span').textContent = grp.length + ' books' + (done ? ' · ' + done + ' finished' : '');
+        list.appendChild(head);
+        grp.slice().sort((x, y) => ((x.seriesIndex != null ? x.seriesIndex : 1e9) - (y.seriesIndex != null ? y.seriesIndex : 1e9)) || ((y.savedAt || 0) - (x.savedAt || 0)))
+           .forEach(b => { list.appendChild(this.card(b, { inSeries: true })); rendered.add(b.id); });
+      } else {
+        list.appendChild(this.card(rec, {})); rendered.add(rec.id);
       }
-      card.appendChild(body);
-
-      const more = document.createElement('button'); more.className = 'more'; more.setAttribute('aria-label', 'Book options'); more.textContent = '⋯';
-      more.addEventListener('click', ev => { ev.stopPropagation(); this.openBookSheet(rec); });
-      card.appendChild(more);
-
-      card.addEventListener('click', () => this.open(rec));
-      card.addEventListener('keydown', ev => { if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); this.open(rec); } });
-      list.appendChild(card);
     });
+  },
+  card(rec, opts){
+    const card = document.createElement('div'); card.className = 'book'; card.setAttribute('role', 'button'); card.tabIndex = 0;
+    const cover = document.createElement('div'); cover.className = 'cover';
+    const url = this.coverUrl(rec);
+    if(url){ const img = document.createElement('img'); img.src = url; img.alt = ''; cover.appendChild(img); cover.classList.add('has-img'); }
+    else cover.textContent = libraryBookTitle(rec);
+    card.appendChild(cover);
+
+    const body = document.createElement('div');
+    const t = document.createElement('div'); t.className = 't'; t.textContent = libraryBookTitle(rec); body.appendChild(t);
+    const a = document.createElement('div'); a.className = 'a'; a.textContent = rec.author || rec.name.replace(/\.(epub|pdf)$/i, ''); body.appendChild(a);
+
+    const p = rec.progress;
+    const fraction = p ? (p.finished ? 1 : p.fraction || 0) : 0;
+    const pr = document.createElement('div'); pr.className = 'pr';
+    pr.innerHTML = '<div class="bar"><i></i></div><span></span>';
+    pr.querySelector('i').style.width = Math.round(fraction * 100) + '%';
+    pr.querySelector('span').textContent = p ? (p.finished ? 'Done' : Math.round(fraction * 100) + '%') : 'New';
+    body.appendChild(pr);
+
+    const cont = document.createElement('div'); cont.className = 'cont';
+    if(p && p.finished) cont.textContent = 'Finished · tap to read again';
+    else if(p && p.chapterTitle) cont.textContent = 'Continue · ' + p.chapterTitle + (p.secLeft ? ' · ' + fmtLong(p.secLeft) + ' left' : '');
+    else if(rec.totalChars) cont.textContent = 'Start · about ' + fmtLong(rec.totalChars * Player.secPerCharNow());
+    else cont.textContent = 'Open';
+    body.appendChild(cont);
+
+    if((rec.shelves && rec.shelves.length) || rec.series){
+      const tags = document.createElement('div'); tags.className = 'tags';
+      if(rec.series){
+        const tag = document.createElement('span'); tag.className = 'tag num';
+        const n = rec.seriesIndex != null ? '#' + rec.seriesIndex : '';
+        tag.textContent = opts.inSeries ? (n || 'Series') : (rec.series.trim() + (n ? ' ' + n : ''));
+        tags.appendChild(tag);
+      }
+      (rec.shelves || []).forEach(s => { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = s; tags.appendChild(tag); });
+      body.appendChild(tags);
+    }
+    card.appendChild(body);
+
+    const more = document.createElement('button'); more.className = 'more'; more.setAttribute('aria-label', 'Book options'); more.textContent = '⋯';
+    more.addEventListener('click', ev => { ev.stopPropagation(); this.openBookSheet(rec); });
+    card.appendChild(more);
+
+    card.addEventListener('click', () => this.open(rec));
+    card.addEventListener('keydown', ev => { if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); this.open(rec); } });
+    return card;
   },
   async open(rec){
     const full = await getLibraryBook(rec.id);
@@ -188,6 +217,8 @@ const Library = {
     this.editing = rec;
     el('bookSheetTitle').textContent = libraryBookTitle(rec);
     el('bookNameInput').value = libraryBookTitle(rec);
+    el('bookSeriesInput').value = rec.series || '';
+    el('bookSeriesIndexInput').value = rec.seriesIndex != null ? rec.seriesIndex : '';
     const g = el('bookShelves'); g.innerHTML = '';
     if(!this.shelves.length){ g.innerHTML = '<div class="row"><span class="sub">No shelves yet. Add some under Edit shelves.</span></div>'; }
     this.shelves.forEach(s => {
@@ -241,6 +272,14 @@ el('bookRenameBtn').addEventListener('click', async () => {
   const name = el('bookNameInput').value.trim();
   if(name){ rec.displayName = name; await updateLibraryBook(rec.id, { displayName: name }); el('bookSheetTitle').textContent = name; Library.renderBooks(); }
 });
+el('bookSeriesBtn').addEventListener('click', async () => {
+  const rec = Library.editing; if(!rec) return;
+  rec.series = el('bookSeriesInput').value.trim();
+  const n = parseFloat(el('bookSeriesIndexInput').value);
+  rec.seriesIndex = rec.series && !isNaN(n) ? n : null;
+  await updateLibraryBook(rec.id, { series: rec.series, seriesIndex: rec.seriesIndex });
+  Library.renderBooks();
+});
 el('bookRestartBtn').addEventListener('click', async () => {
   const rec = Library.editing; if(!rec) return;
   const key = progressKeyFor(rec.name.replace(/\.(epub|pdf)$/i, ''), rec.data ? rec.data.byteLength : 0);
@@ -264,8 +303,138 @@ el('addShelfBtn').addEventListener('click', () => {
 el('newShelfInput').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); el('addShelfBtn').click(); } });
 el('shelvesRow').addEventListener('click', () => { Library.renderShelfManager(); openSheet('shelvesSheet'); });
 
+// ---------------- Watched folder ----------------
+// Chrome and Edge on desktop can remember a folder between visits (File System
+// Access API): the app checks it for new EPUBs and PDFs on every start and on demand.
+// Other browsers can only import a folder's contents when it is picked. New books
+// arrive with no shelf; shelving is up to the person.
+const Folder = {
+  handle: null,
+  supported: 'showDirectoryPicker' in window,
+  scanning: false,
+  async init(){
+    this.handle = (await kvGet('watchedFolder')) || null;
+    this.render();
+    if(!this.handle) return;
+    try{
+      if((await this.handle.queryPermission({ mode: 'read' })) === 'granted') this.scan();
+      else this.render('Tap Check now to allow access to it again.');
+    } catch(e){ this.render(); }
+  },
+  async pick(){
+    if(!this.supported){ el('folderInput').click(); return; }
+    try{
+      const handle = await window.showDirectoryPicker({ mode: 'read' });
+      await kvSet('watchedFolder', handle);
+      this.handle = handle; this.render();
+      await this.scan();
+    } catch(err){ if(!err || err.name !== 'AbortError'){ console.error(err); this.render('Could not use that folder: ' + (err && err.message)); } }
+  },
+  async forget(){ await kvSet('watchedFolder', undefined); this.handle = null; settingSet('folderLastScan', ''); this.render(); },
+  async ensurePermission(){
+    if(!this.handle) return false;
+    let p = await this.handle.queryPermission({ mode: 'read' });
+    if(p !== 'granted') p = await this.handle.requestPermission({ mode: 'read' });
+    return p === 'granted';
+  },
+  async *walk(dir, path){
+    for await (const [name, h] of dir.entries()){
+      if(h.kind === 'file'){ if(/\.(epub|pdf)$/i.test(name)) yield { handle: h, path: path + name }; }
+      else if(h.kind === 'directory') yield* this.walk(h, path + name + '/');
+    }
+  },
+  async scan(){
+    if(!this.handle || this.scanning) return;
+    let ok = false;
+    try{ ok = await this.ensurePermission(); } catch(e){ ok = false; }
+    if(!ok){ this.render('Access was not allowed. Tap Check now to try again.'); return; }
+    this.scanning = true;
+    const known = new Set(Library.books.map(b => b.id));
+    let added = 0, seen = 0;
+    try{
+      for await (const f of this.walk(this.handle, '')){
+        seen++;
+        const id = f.path.split('/').pop().trim().toLowerCase();
+        if(known.has(id)) continue;
+        this.render('Adding ' + f.path + ' …');
+        try{ if(await importFile(await f.handle.getFile(), { sourcePath: f.path })){ known.add(id); added++; } }
+        catch(err){ console.error('Could not add', f.path, err); }
+      }
+      settingSet('folderLastScan', Date.now());
+    } catch(err){ console.error(err); this.scanning = false; this.render('Could not read the folder: ' + (err && err.message)); return; }
+    this.scanning = false;
+    if(added) await Library.refresh();
+    this.render(added ? 'Added ' + added + (added === 1 ? ' new book' : ' new books') + '.' : 'No new books (' + seen + ' checked).');
+  },
+  // Browsers without a persistent handle: import whatever is in the picked folder now.
+  async importPicked(files){
+    const list = Array.from(files || []).filter(f => /\.(epub|pdf)$/i.test(f.name));
+    if(!list.length){ this.render('No EPUB or PDF files in that folder.'); return; }
+    const known = new Set(Library.books.map(b => b.id));
+    let added = 0;
+    for(const f of list){
+      if(known.has(bookIdFor(f))) continue;
+      this.render('Adding ' + f.name + ' …');
+      try{ if(await importFile(f, { sourcePath: f.webkitRelativePath || f.name })){ known.add(bookIdFor(f)); added++; } } catch(err){ console.error(err); }
+    }
+    if(added) await Library.refresh();
+    this.render(added ? 'Added ' + added + (added === 1 ? ' new book' : ' new books') + ' from that folder.' : 'No new books in that folder.');
+  },
+  render(msg){
+    const name = this.handle ? this.handle.name : '';
+    const last = parseInt(settingGet('folderLastScan', '0'), 10);
+    el('folderTitle').textContent = name ? 'Watching \u201C' + name + '\u201D' : (this.supported ? 'Or keep a folder in step' : 'Or add a whole folder');
+    el('folderSub').textContent = msg || (name
+      ? 'New EPUBs and PDFs in it, and in its subfolders, are added when the app opens.' + (last ? ' Last checked ' + new Date(last).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.' : '')
+      : (this.supported ? 'New EPUBs and PDFs in it, and in its subfolders, are added to the library on their own. New books arrive without a shelf; put them where you like.'
+                        : 'Every EPUB and PDF in the folder and its subfolders is added, without a shelf. This browser cannot remember the folder, so pick it again to check for new files.'));
+    el('folderPickBtn').textContent = name ? 'Change folder' : (this.supported ? 'Choose a folder' : 'Add a folder');
+    el('folderScanBtn').classList.toggle('hidden', !name);
+    el('folderForgetBtn').classList.toggle('hidden', !name);
+    el('folderVal').textContent = name || 'None';
+    el('folderRowSub').textContent = name ? (last ? 'Last checked ' + new Date(last).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Not checked yet') : (this.supported ? 'New EPUBs and PDFs are added on their own' : 'Pick a folder to add its books');
+  }
+};
+el('folderPickBtn').addEventListener('click', () => Folder.pick());
+el('folderScanBtn').addEventListener('click', () => Folder.scan());
+el('folderForgetBtn').addEventListener('click', () => Folder.forget());
+el('folderRow').addEventListener('click', () => { el('viewSettings').classList.add('hidden'); showView('viewLibrary'); Folder.pick(); });
+el('folderInput').addEventListener('change', e => { Folder.importPicked(e.target.files); e.target.value = ''; });
+el('seriesToggle').addEventListener('change', () => { settingSet('groupSeries', el('seriesToggle').checked ? '1' : '0'); Library.renderBooks(); });
+
 // ---------------- Opening a file ----------------
-el('fileInput').addEventListener('change', e => { if(e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ''; });
+el('fileInput').addEventListener('change', e => {
+  const files = Array.from(e.target.files || []); e.target.value = '';
+  if(files.length === 1) handleFile(files[0]);
+  else if(files.length > 1) importFiles(files);
+});
+
+// Reads a book's metadata (title, author, cover, series) and puts it in the library
+// without opening it. Chapters are parsed the first time it is opened.
+async function importFile(file, opts){
+  opts = opts || {};
+  const name = file.name.toLowerCase();
+  if(!/\.(epub|pdf)$/.test(name)) return false;
+  const buf = await file.arrayBuffer();
+  const meta = name.endsWith('.epub') ? await readEpubMeta(buf) : await readPdfMeta(buf.slice(0));
+  await saveBookToLibrary(file, buf, {
+    title: meta.title || '', author: meta.author || '', cover: meta.cover || undefined,
+    series: meta.series || '', seriesIndex: meta.seriesIndex, sourcePath: opts.sourcePath || '',
+    shelves: opts.suggestShelves ? Library.suggestShelves(meta.subjects) : []
+  });
+  return true;
+}
+async function importFiles(files){
+  const status = el('loadStatus');
+  let added = 0;
+  for(const file of files){
+    status.textContent = 'Adding ' + file.name + ' …';
+    try{ if(await importFile(file, { suggestShelves: true })) added++; }
+    catch(err){ console.error(err); }
+  }
+  status.textContent = 'Added ' + added + (added === 1 ? ' book' : ' books') + ' to the library.';
+  Library.refresh();
+}
 const dropZone = el('dropZone');
 ['dragover', 'dragenter'].forEach(evt => dropZone.addEventListener(evt, e => { e.preventDefault(); dropZone.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(evt => dropZone.addEventListener(evt, e => { e.preventDefault(); dropZone.classList.remove('over'); }));
@@ -285,6 +454,7 @@ async function handleFile(file, opts){
       meta = await readEpubMeta(buf);
     } else if(name.endsWith('.pdf')){
       chapters = await parsePdf(buf.slice(0)); // pdf.js's worker can detach the buffer it's given, so hand it a copy
+      meta = await readPdfMeta(buf.slice(0));
     } else {
       status.textContent = 'Please choose an .epub or .pdf file.'; return;
     }
@@ -313,6 +483,7 @@ async function handleFile(file, opts){
     // Library record: file bytes, cover, metadata, and a suggested shelf for a new book.
     await saveBookToLibrary(file, buf, {
       title: meta.title || '', author, cover: meta.cover || undefined, totalChars, chapterCount: chapters.length,
+      series: meta.series || '', seriesIndex: meta.seriesIndex,
       shelves: Library.suggestShelves(meta.subjects)
     });
     Player.saveSummary(true);
@@ -609,6 +780,7 @@ function syncSettings(){
   el('serverSub').textContent = Voice.settings.serverUrl.replace(/^https?:\/\//, '').replace(/\/[^/]*$/, '');
   el('serverDot').classList.toggle('online', Voice.settings.useServer);
   el('shelvesVal').textContent = Library.shelves.length;
+  el('seriesToggle').checked = settingGet('groupSeries', '1') === '1';
   Reader.updateChips();
 }
 $$('#skipSeg button').forEach(b => b.addEventListener('click', () => { Player.setSkipUnit(b.dataset.v); syncSettings(); }));
@@ -808,6 +980,7 @@ Voice.onStatus(text => {
 syncSettings();
 Library.refresh().then(() => {
   openSharedFile();
+  Folder.init();
   // Warm up the voice in the background so the first Play doesn't wait on it.
   if(Voice.settings.useServer || Voice.settings.engine === 'piper') Voice.ensureReady().then(() => Reader.updateChips()).catch(() => {});
   requestPersistentStorage();

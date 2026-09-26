@@ -5,14 +5,42 @@
 
 const LIBRARY_DB = 'lamplight-reader';
 const LIBRARY_STORE = 'files';
+const KV_STORE = 'kv'; // small things that don't fit localStorage, such as a folder handle
 
 function openLibraryDB(){
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(LIBRARY_DB, 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(LIBRARY_STORE, { keyPath: 'id' }); };
+    const req = indexedDB.open(LIBRARY_DB, 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if(!db.objectStoreNames.contains(LIBRARY_STORE)) db.createObjectStore(LIBRARY_STORE, { keyPath: 'id' });
+      if(!db.objectStoreNames.contains(KV_STORE)) db.createObjectStore(KV_STORE);
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+async function kvGet(key){
+  try{
+    const db = await openLibraryDB();
+    try{
+      return await new Promise((resolve, reject) => {
+        const req = db.transaction(KV_STORE, 'readonly').objectStore(KV_STORE).get(key);
+        req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+      });
+    } finally { db.close(); }
+  } catch(err){ console.warn('Could not read', key, err); return undefined; }
+}
+async function kvSet(key, value){
+  try{
+    const db = await openLibraryDB();
+    try{
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(KV_STORE, 'readwrite');
+        if(value === undefined) tx.objectStore(KV_STORE).delete(key); else tx.objectStore(KV_STORE).put(value, key);
+        tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+      });
+    } finally { db.close(); }
+  } catch(err){ console.warn('Could not store', key, err); }
 }
 
 // Runs one read-write transaction against the library store and resolves when it
@@ -55,6 +83,9 @@ async function saveBookToLibrary(file, buf, extra){
           shelves: old.shelves || extra.shelves || [],
           title: extra.title || old.title || '',
           author: extra.author || old.author || '',
+          series: old.series !== undefined ? old.series : (extra.series || ''),
+          seriesIndex: old.seriesIndex !== undefined ? old.seriesIndex : (extra.seriesIndex != null ? extra.seriesIndex : null),
+          sourcePath: extra.sourcePath || old.sourcePath || '',
           cover: extra.cover !== undefined ? extra.cover : (old.cover || null),
           totalChars: extra.totalChars || old.totalChars || 0,
           chapterCount: extra.chapterCount || old.chapterCount || 0,
@@ -183,6 +214,7 @@ async function exportBackupBlob(){
     books: books.map(rec => ({
       id: rec.id, name: rec.name, type: rec.type || '', displayName: rec.displayName || '', title: rec.title || '',
       author: rec.author || '', shelves: rec.shelves || [], totalChars: rec.totalChars || 0, chapterCount: rec.chapterCount || 0,
+      series: rec.series || '', seriesIndex: rec.seriesIndex != null ? rec.seriesIndex : null,
       progress: rec.progress || null, savedAt: rec.savedAt || 0,
       file: rec.data ? 'books/' + rec.id : null,
       cover: rec.cover ? 'covers/' + rec.id + (rec.cover.type === 'image/png' ? '.png' : '.jpg') : null,
@@ -243,6 +275,7 @@ async function importBackup(file){
       await withLibraryStore('readwrite', store => store.put({
         id: b.id, name: b.name, type: b.type, data, savedAt: b.savedAt || Date.now(),
         displayName: b.displayName || undefined, title: b.title || '', author: b.author || '', shelves: b.shelves || [],
+        series: b.series || '', seriesIndex: b.seriesIndex != null ? b.seriesIndex : null,
         cover, totalChars: b.totalChars || 0, chapterCount: b.chapterCount || 0, progress: b.progress || null
       }));
       out.booksAdded++;
@@ -253,6 +286,7 @@ async function importBackup(file){
       if(!local.displayName && b.displayName) merged.displayName = b.displayName;
       if(!local.title && b.title) merged.title = b.title;
       if(!local.author && b.author) merged.author = b.author;
+      if(!local.series && b.series){ merged.series = b.series; merged.seriesIndex = b.seriesIndex != null ? b.seriesIndex : null; }
       if(!local.cover && cover) merged.cover = cover;
       if(b.progress && (!local.progress || (b.progress.at || 0) > (local.progress.at || 0))) merged.progress = b.progress;
       await updateLibraryBook(b.id, merged);
