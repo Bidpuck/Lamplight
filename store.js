@@ -118,7 +118,7 @@ function saveShelves(list){
 function progressKeyFor(title, size){ return 'lamplight:' + title + ':' + size; }
 function saveProgressFor(key, pos){
   if(!key) return;
-  try{ localStorage.setItem(key, JSON.stringify(pos)); } catch(e){ /* storage full or unavailable */ }
+  try{ localStorage.setItem(key, JSON.stringify(Object.assign({ at: Date.now() }, pos))); } catch(e){ /* storage full or unavailable */ }
 }
 function loadProgressFor(key){
   if(!key) return null;
@@ -147,4 +147,117 @@ async function requestPersistentStorage(){
 }
 async function storageEstimate(){
   try{ return navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; } catch(e){ return null; }
+}
+
+// ---------------- Backup and restore ----------------
+// One zip file holds every book, its cover, shelves, positions, pronunciation rules
+// and filter words. Saved to iCloud Drive or Google Drive and restored on another
+// device, it is also how two of your own devices stay in step: restoring merges,
+// newer positions win, and nothing is deleted.
+const BACKUP_MANIFEST = 'lamplight-backup.json';
+const DEVICE_SETTINGS = ['fontSize','font','theme','darkMode','follow','fadeRead','engine','useServer','serverUrl',
+  'maxInternalGapMs','speed','voice','piperVoice','skipUnit','secPerChar','shelves','filterSettings','pronunciationRules','lastBackupAt'];
+
+function isPositionKey(key){ return /^lamplight:.+:\d+$/.test(key); }
+function readPosition(raw){
+  try{ const p = JSON.parse(raw); return p && typeof p.chapter === 'number' && typeof p.sentence === 'number' ? p : null; } catch(e){ return null; }
+}
+
+async function exportBackupBlob(){
+  const zip = new JSZip();
+  const books = await listLibraryBooks();
+  const positions = {};
+  try{
+    for(let i = 0; i < localStorage.length; i++){
+      const key = localStorage.key(i);
+      if(isPositionKey(key) && readPosition(localStorage.getItem(key))) positions[key] = readPosition(localStorage.getItem(key));
+    }
+  } catch(e){ /* ignore */ }
+  const manifest = {
+    version: 1,
+    exportedAt: Date.now(),
+    shelves: loadShelves(),
+    filterWords: settingGetJSON('filterSettings', {}).custom || [],
+    pronunciationRules: settingGetJSON('pronunciationRules', []),
+    positions,
+    books: books.map(rec => ({
+      id: rec.id, name: rec.name, type: rec.type || '', displayName: rec.displayName || '', title: rec.title || '',
+      author: rec.author || '', shelves: rec.shelves || [], totalChars: rec.totalChars || 0, chapterCount: rec.chapterCount || 0,
+      progress: rec.progress || null, savedAt: rec.savedAt || 0,
+      file: rec.data ? 'books/' + rec.id : null,
+      cover: rec.cover ? 'covers/' + rec.id + (rec.cover.type === 'image/png' ? '.png' : '.jpg') : null,
+      coverType: rec.cover ? rec.cover.type : null
+    }))
+  };
+  books.forEach(rec => {
+    if(rec.data) zip.file('books/' + rec.id, rec.data);
+    if(rec.cover) zip.file('covers/' + rec.id + (rec.cover.type === 'image/png' ? '.png' : '.jpg'), rec.cover);
+  });
+  zip.file(BACKUP_MANIFEST, JSON.stringify(manifest));
+  return zip.generateAsync({ type: 'blob', compression: 'STORE' }); // EPUBs are already compressed
+}
+
+// Merges a backup into this device. Returns counts for the message shown afterwards.
+async function importBackup(file){
+  const zip = await JSZip.loadAsync(file);
+  const entry = zip.file(BACKUP_MANIFEST);
+  if(!entry) throw new Error('That is not a Lamplight backup.');
+  const manifest = JSON.parse(await entry.async('string'));
+  const out = { booksAdded: 0, booksUpdated: 0, positionsUpdated: 0, newerPositions: {} };
+
+  // Shelves, filter words and pronunciation rules: union.
+  const shelves = loadShelves();
+  (manifest.shelves || []).forEach(s => { if(!shelves.includes(s)) shelves.push(s); });
+  saveShelves(shelves);
+  const fs = settingGetJSON('filterSettings', { enabled: true, custom: [] });
+  fs.custom = fs.custom || [];
+  (manifest.filterWords || []).forEach(w => { if(!fs.custom.includes(w)) fs.custom.push(w); });
+  settingSet('filterSettings', JSON.stringify(fs));
+  const rules = settingGetJSON('pronunciationRules', []);
+  const ruleKey = r => [r.find, r.replace || '', !!r.matchCase].join('\u0001');
+  const have = new Set(rules.map(ruleKey));
+  (manifest.pronunciationRules || []).forEach(r => { if(r && r.find && !have.has(ruleKey(r))){ rules.push(r); have.add(ruleKey(r)); } });
+  settingSet('pronunciationRules', JSON.stringify(rules));
+
+  // Reading positions: the newer one wins.
+  Object.entries(manifest.positions || {}).forEach(([key, pos]) => {
+    if(!isPositionKey(key) || !pos) return;
+    let local = null;
+    try{ local = readPosition(localStorage.getItem(key)); } catch(e){ /* ignore */ }
+    if(!local || (pos.at || 0) > (local.at || 0)){
+      try{ localStorage.setItem(key, JSON.stringify(pos)); } catch(e){ /* ignore */ }
+      out.positionsUpdated++; out.newerPositions[key] = pos;
+    }
+  });
+
+  // Books: add missing ones, merge the rest.
+  for(const b of manifest.books || []){
+    if(!b || !b.id) continue;
+    const local = await getLibraryBook(b.id);
+    const coverEntry = b.cover && zip.file(b.cover);
+    const cover = coverEntry ? new Blob([await coverEntry.async('uint8array')], { type: b.coverType || 'image/jpeg' }) : null;
+    if(!local){
+      const dataEntry = b.file && zip.file(b.file);
+      if(!dataEntry) continue;
+      const data = await dataEntry.async('arraybuffer');
+      await withLibraryStore('readwrite', store => store.put({
+        id: b.id, name: b.name, type: b.type, data, savedAt: b.savedAt || Date.now(),
+        displayName: b.displayName || undefined, title: b.title || '', author: b.author || '', shelves: b.shelves || [],
+        cover, totalChars: b.totalChars || 0, chapterCount: b.chapterCount || 0, progress: b.progress || null
+      }));
+      out.booksAdded++;
+    } else {
+      const merged = {};
+      const union = (local.shelves || []).slice(); (b.shelves || []).forEach(s => { if(!union.includes(s)) union.push(s); });
+      merged.shelves = union;
+      if(!local.displayName && b.displayName) merged.displayName = b.displayName;
+      if(!local.title && b.title) merged.title = b.title;
+      if(!local.author && b.author) merged.author = b.author;
+      if(!local.cover && cover) merged.cover = cover;
+      if(b.progress && (!local.progress || (b.progress.at || 0) > (local.progress.at || 0))) merged.progress = b.progress;
+      await updateLibraryBook(b.id, merged);
+      out.booksUpdated++;
+    }
+  }
+  return out;
 }

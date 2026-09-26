@@ -116,6 +116,14 @@
       <button class="row" id="clearAudioRow"><span>Clear prepared audio<span class="sub">Frees memory; nothing else is lost</span></span></button>
     </div>
 
+    <div class="sec">Back up and sync</div>
+    <div class="grp">
+      <button class="row" id="backupRow"><span>Back up to a file<span class="sub" id="backupSub">Every book, its shelves and your place in it</span></span><span class="val" id="backupVal">Never</span></button>
+      <button class="row" id="restoreRow"><span>Restore or merge from a file<span class="sub">Adds what is missing; newer positions win; nothing is deleted</span></span><span class="val"></span></button>
+      <input type="file" id="restoreInput" accept=".zip,application/zip" class="hidden">
+      <p class="foot" id="backupFoot">Save the backup to iCloud Drive or Google Drive, then restore it on your other device to carry your books and positions across. Do it in both directions and the two stay in step.</p>
+    </div>
+
     <div class="sec">About</div>
     <div class="grp">
       <div class="row"><span>Lamplight Reader</span><span class="val noarrow">2.0</span></div>
@@ -129,7 +137,10 @@
 <div class="sheet hidden" id="tocSheet"><div class="panel">
   <div class="handle"></div>
   <div class="ph"><h3>Contents</h3><button class="x" data-close="tocSheet" aria-label="Close">✕</button></div>
+  <input type="search" id="bookSearch" class="text-input search" placeholder="Search this book" autocomplete="off" aria-label="Search this book">
   <div class="grp" id="tocList"></div>
+  <div class="grp hidden" id="searchResults"></div>
+  <p class="foot" id="searchFoot"></p>
 </div></div>
 
 <div class="sheet hidden" id="voiceSheet"><div class="panel">

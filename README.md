@@ -13,6 +13,9 @@ A private, local audiobook player for your browser. Upload an EPUB or PDF and it
 - **Text size, five fonts, paper or dark theme**
 - **Optional language filter** and a pronunciation dictionary for names the voice gets wrong
 - **Lock-screen playback controls** with the book's cover
+- **Search within the book** from the Contents sheet; tap a match to start reading there
+- **Back up and sync** — one file with every book, its shelves and your place in it. Save it to iCloud Drive or Google Drive and restore it on your other device; restoring merges, newer positions win, nothing is deleted
+- **Open in Lamplight** — once installed to the home screen on Android or as a desktop app, a book can be shared or opened straight into it. iPhone doesn't offer this to web apps yet, so there the Add a book button and the Files app remain the way in
 
 ## How to use it
 

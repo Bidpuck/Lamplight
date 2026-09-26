@@ -294,6 +294,11 @@ body.dark .handle{ background: rgba(255,255,255,0.22); }
 .chips button.on{ background: var(--lamp); border-color: var(--lamp); color:#F3EEDD; }
 .sheet-tools{ display:flex; gap:8px; margin: 0 0 12px; flex-wrap:wrap; }
 .toc-pct{ font-size:12px; color: var(--ink-soft); flex-shrink:0; }
+.text-input.search{ margin: 0 0 12px; -webkit-appearance:none; appearance:none; }
+.result .snip{ display:block; font-family: var(--prose-font); font-size:14px; line-height:1.4; color: var(--ink); }
+.result .snip mark{ background: var(--glow); color:inherit; border-radius:3px; padding:0 1px; }
+.result .where{ display:block; font-size:12px; color: var(--ink-soft); margin-top:3px; }
+.grp .foot{ padding: 6px 14px 12px; }
 
 /* ---------- Voice server connection popup ---------- */
 .connect-toast{
