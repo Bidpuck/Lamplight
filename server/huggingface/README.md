@@ -17,8 +17,10 @@ so reading aloud works without the Mac server or Tailscale.
 ## Set it up
 
 1. Sign in at huggingface.co and choose **New Space**.
-2. Pick a name (for example `lamplight-voice`), choose **Gradio** → **Blank**, keep
-   the free **CPU basic** hardware, and set visibility to **Public**.
+2. Pick a name (for example `lamplight-voice`), choose **Gradio** → **Blank**, and
+   set visibility to **Public**. For hardware, pick the free **CPU basic** if it's
+   offered, otherwise **ZeroGPU**. The voice runs on the CPU either way; on ZeroGPU
+   it uses none of the daily GPU time.
    (A private Space would need a Hugging Face token the app can't send; the access
    key below protects it instead.)
 3. In the new Space, open **Files → Add file → Upload files** and upload the three

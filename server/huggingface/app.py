@@ -1,4 +1,4 @@
-"""Lamplight voice server for a Hugging Face Space (Gradio SDK, free CPU tier).
+"""Lamplight voice server for a Hugging Face Space (Gradio SDK, ZeroGPU or CPU).
 
 Serves the same /kokoro/voices and /kokoro/tts requests the Lamplight app sends
 to the Mac server, so the app only needs a different Server address.
@@ -9,6 +9,13 @@ The key is read from the LAMPLIGHT_KEY secret in the Space's settings. Putting i
 in the path (rather than a header) means the app needs no changes: the key is just
 part of the Server address.
 """
+# On ZeroGPU Spaces, `spaces` must be imported before anything else touches the
+# GPU. It isn't installed elsewhere (e.g. running locally), which is fine.
+try:
+    import spaces
+except ImportError:
+    spaces = None
+
 import hmac
 import io
 import os
@@ -17,10 +24,10 @@ import urllib.request
 
 import gradio as gr
 import soundfile as sf
-import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from starlette.middleware import Middleware
 from kokoro_onnx import Kokoro
 from pydantic import BaseModel
 
@@ -47,13 +54,15 @@ VOICES = sorted(v for v in kokoro.get_voices() if v[:1] in ("a", "b"))
 # instead of letting the app's read-ahead requests fight over the CPU.
 generate_lock = threading.Lock()
 
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
-)
+# Kokoro runs on the CPU, so nothing here needs a GPU. ZeroGPU Spaces still refuse
+# to start without at least one @spaces.GPU function, so register one that is never
+# called; it uses none of the daily GPU quota.
+if spaces is not None:
+    @spaces.GPU(duration=1)
+    def _zerogpu_placeholder():
+        return None
+
+router = APIRouter()
 
 
 def check_key(key: str):
@@ -69,13 +78,13 @@ class TTSRequest(BaseModel):
     speed: float = 1.0
 
 
-@app.get("/{key}/kokoro/voices")
+@router.get("/{key}/kokoro/voices")
 def kokoro_voices(key: str):
     check_key(key)
     return {"voices": VOICES}
 
 
-@app.post("/{key}/kokoro/tts")
+@router.post("/{key}/kokoro/tts")
 def kokoro_tts(key: str, req: TTSRequest):
     check_key(key)
     text = req.text.strip()
@@ -94,22 +103,36 @@ def kokoro_tts(key: str, req: TTSRequest):
     return Response(buf.getvalue(), media_type="audio/wav")
 
 
-@app.get("/{key}/piper/voices")
+@router.get("/{key}/piper/voices")
 def piper_voices(key: str):
     check_key(key)
     raise HTTPException(404, "This server only has Kokoro voices. Choose Kokoro as the voice engine.")
 
 
-# A small status page for the Space's own web page. Mounted last so the routes
-# above take priority over it. Server-side rendering stays off: Spaces turn it on
-# by default, and it starts a separate Node server that grabs port 7860 first.
+# A small status page for the Space's own web page. Gradio runs the server itself
+# (ZeroGPU only sets up when Gradio's launch() is used); the voice routes and CORS
+# go in through app_kwargs, so they're registered ahead of Gradio's own routes.
 with gr.Blocks(title="Lamplight voice") as status_page:
     gr.Markdown(
         "## Lamplight voice server is running\n"
         f"{len(VOICES)} Kokoro voices ready. Use this Space's address plus your "
         "access key as the Server address in Lamplight's Settings."
     )
-app = gr.mount_gradio_app(app, status_page, path="/", ssr_mode=False)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    status_page.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        # Server-side rendering starts a separate Node server the voice routes
+        # would have to share the port with; the status page doesn't need it.
+        ssr_mode=False,
+        app_kwargs={
+            "routes": router.routes,
+            "middleware": [Middleware(
+                CORSMiddleware,
+                allow_origins=ALLOWED_ORIGINS,
+                allow_methods=["GET", "POST"],
+                allow_headers=["Content-Type"],
+            )],
+        },
+    )
