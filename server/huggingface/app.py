@@ -101,14 +101,15 @@ def piper_voices(key: str):
 
 
 # A small status page for the Space's own web page. Mounted last so the routes
-# above take priority over it.
+# above take priority over it. Server-side rendering stays off: Spaces turn it on
+# by default, and it starts a separate Node server that grabs port 7860 first.
 with gr.Blocks(title="Lamplight voice") as status_page:
     gr.Markdown(
         "## Lamplight voice server is running\n"
         f"{len(VOICES)} Kokoro voices ready. Use this Space's address plus your "
         "access key as the Server address in Lamplight's Settings."
     )
-app = gr.mount_gradio_app(app, status_page, path="/")
+app = gr.mount_gradio_app(app, status_page, path="/", ssr_mode=False)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=7860)
