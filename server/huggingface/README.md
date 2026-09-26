@@ -3,8 +3,9 @@ title: Lamplight Voice
 emoji: 🕯️
 colorFrom: yellow
 colorTo: gray
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 6.28.0
+app_file: app.py
 pinned: false
 ---
 
@@ -16,17 +17,18 @@ so reading aloud works without the Mac server or Tailscale.
 ## Set it up
 
 1. Sign in at huggingface.co and choose **New Space**.
-2. Pick a name (for example `lamplight-voice`), choose **Docker** → **Blank**, keep
+2. Pick a name (for example `lamplight-voice`), choose **Gradio** → **Blank**, keep
    the free **CPU basic** hardware, and set visibility to **Public**.
    (A private Space would need a Hugging Face token the app can't send; the access
    key below protects it instead.)
-3. In the new Space, open **Files → Add file → Upload files** and upload the four
-   files from this folder: `README.md`, `Dockerfile`, `app.py`, `requirements.txt`.
+3. In the new Space, open **Files → Add file → Upload files** and upload the three
+   files from this folder: `README.md`, `app.py`, `requirements.txt`. Replace the
+   `README.md` the Space started with.
 4. Open **Settings → Variables and secrets → New secret**.
    Name: `LAMPLIGHT_KEY`. Value: a long random password you make up (letters and
    numbers only, no slashes).
-5. Wait for the build to finish (the status at the top turns to **Running**; the
-   first build takes several minutes).
+5. Wait for the Space to show **Running**. The first start takes a few minutes,
+   including downloading the voice model.
 
 ## Connect the app
 
@@ -41,7 +43,8 @@ For example `https://btarcau-lamplight-voice.hf.space/Xk29fq7Lm3Pz8Rt`.
 ## Good to know
 
 - **It sleeps.** After about 48 hours unused, the Space goes to sleep. The first
-  request after that takes a minute or two while it wakes; press Refresh next to
+  request after that takes a minute or two while it wakes and re-downloads the
+  voice model; press Refresh next to
   Voice, or Play again, once it's up.
 - **Your book text goes to this server** to be turned into speech. Nothing is
   stored, but it does leave your device, unlike the Mac server.
