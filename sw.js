@@ -9,9 +9,18 @@ const SHARED_CACHE = 'lamplight-shared';
 const SHELL_FILES = ['./', './index.html', './style.css', './app.js', './book.js', './text.js', './store.js',
   './voice.js', './player.js', './kokoro-engine.js', './piper-engine.js', './manifest.json',
   './icon-32.png', './icon-180.png', './icon-512.png'];
+// The two libraries books can't be opened without. Pinned versions, served with CORS,
+// so they can be cached and served cache-first.
+const LIB_FILES = [
+  'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_FILES)).catch(() => {}).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(SHELL_CACHE).then(cache =>
+    Promise.all([cache.addAll(SHELL_FILES), cache.addAll(LIB_FILES)].map(p => p.catch(() => {})))
+  ).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', event => {
   event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith('lamplight-shell-') && k !== SHELL_CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
@@ -19,7 +28,14 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  if(url.origin !== self.location.origin) return; // CDN libraries, voice models and servers go straight through
+  if(LIB_FILES.includes(url.href)){
+    event.respondWith(caches.match(event.request, { ignoreVary: true }).then(cached => cached || fetch(event.request).then(res => {
+      if(res && res.ok) caches.open(SHELL_CACHE).then(cache => cache.put(event.request, res.clone())).catch(() => {});
+      return res;
+    })));
+    return;
+  }
+  if(url.origin !== self.location.origin) return; // voice models, engine modules and servers go straight through
 
   if(event.request.method === 'POST' && url.pathname.endsWith('/share-target')){
     event.respondWith((async () => {

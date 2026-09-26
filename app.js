@@ -304,7 +304,6 @@ async function handleFile(file, opts){
       artworkUrl: cover ? URL.createObjectURL(cover) : null, artworkType: cover ? cover.type : null
     };
     Reader.book = book;
-    Search.index = null;
     Player.load(chapters, book, saved);
     Reader.renderChapter();
     showView('viewReader');
@@ -448,28 +447,29 @@ const Reader = {
 // Lives in the Contents sheet: type and the chapter list gives way to matching
 // sentences; tap one to start reading there.
 const Search = {
-  index: null, // [{ch, s, lower}] built once per book on first search
-  build(){
-    this.index = [];
-    Player.chapters.forEach((ch, ci) => ch.sentences.forEach((t, si) => this.index.push({ ch: ci, s: si, lower: t.toLowerCase() })));
-  },
   run(query){
     const list = el('searchResults'), foot = el('searchFoot');
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if(!q){ list.classList.add('hidden'); el('tocList').classList.remove('hidden'); foot.textContent = ''; return; }
-    if(!this.index) this.build();
+    // Match on the original text with a case-insensitive pattern, so the offset used
+    // for the snippet is an offset into that same text (lower-casing can change length).
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu');
     const MAX = 100;
     const hits = [];
-    for(const item of this.index){
-      const at = item.lower.indexOf(q);
-      if(at >= 0){ hits.push({ item, at }); if(hits.length >= MAX) break; }
+    outer: for(let ci = 0; ci < Player.chapters.length; ci++){
+      const sentences = Player.chapters[ci].sentences;
+      for(let si = 0; si < sentences.length; si++){
+        const m = re.exec(sentences[si]);
+        if(m){ hits.push({ item: { ch: ci, s: si }, at: m.index, len: m[0].length }); if(hits.length >= MAX) break outer; }
+      }
     }
     list.innerHTML = '';
     el('tocList').classList.add('hidden'); list.classList.remove('hidden');
     if(!hits.length){ list.innerHTML = '<div class="row"><span class="sub">Nothing found for \u201C' + query.trim().replace(/</g, '&lt;') + '\u201D</span></div>'; foot.textContent = ''; return; }
-    hits.forEach(({ item, at }) => {
+    hits.forEach(({ item, at, len }) => {
       const ch = Player.chapters[item.ch];
       const text = ch.sentences[item.s];
+      const q = { length: len };
       const r = document.createElement('button'); r.className = 'row result';
       const body = document.createElement('span');
       const snip = document.createElement('span'); snip.className = 'snip';
@@ -706,26 +706,42 @@ function showBackupDate(){
   const at = parseInt(settingGet('lastBackupAt', '0'), 10);
   el('backupVal').textContent = at ? new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Never';
 }
+// Building the zip can take a while with a real library, and the share sheet only
+// opens from a fresh tap. So the first tap packs the file and the next tap hands it
+// over (a download needs no such care and happens at once).
+let pendingBackup = null;
 el('backupRow').addEventListener('click', async () => {
   const foot = el('backupFoot');
-  foot.textContent = 'Packing your library…';
+  const canShare = !!(navigator.canShare && navigator.share);
   try{
-    const blob = await exportBackupBlob();
-    const file = new File([blob], backupFileName(), { type: 'application/zip' });
-    // The share sheet is the way into iCloud Drive and Google Drive on a phone; a
-    // download is the fallback on desktop browsers.
-    if(navigator.canShare && navigator.canShare({ files: [file] })){
+    if(!pendingBackup){
+      foot.textContent = 'Packing your library…';
+      const blob = await exportBackupBlob();
+      pendingBackup = new File([blob], backupFileName(), { type: 'application/zip' });
+      if(canShare && navigator.canShare({ files: [pendingBackup] })){
+        el('backupVal').textContent = 'Tap to save';
+        foot.textContent = 'Backup ready (' + Math.max(1, Math.round(blob.size / 1048576)) + ' MB). Tap again to save it to iCloud Drive, Google Drive or anywhere else.';
+        return;
+      }
+    }
+    const file = pendingBackup;
+    if(canShare && navigator.canShare({ files: [file] })){
       try{ await navigator.share({ files: [file], title: 'Lamplight backup' }); }
-      catch(err){ if(err && err.name === 'AbortError'){ foot.textContent = 'Backup cancelled.'; return; } throw err; }
+      catch(err){
+        if(err && err.name === 'AbortError'){ foot.textContent = 'Not saved. Tap again when you are ready.'; return; }
+        throw err;
+      }
     } else {
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(file);
       const link = document.createElement('a'); link.href = url; link.download = file.name; document.body.appendChild(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
+    pendingBackup = null;
     settingSet('lastBackupAt', Date.now()); showBackupDate();
-    foot.textContent = 'Backup ready: ' + file.name + ' (' + Math.max(1, Math.round(blob.size / 1048576)) + ' MB). Keep it in iCloud Drive or Google Drive, then restore it on your other device.';
+    foot.textContent = 'Saved ' + file.name + '. Keep it in iCloud Drive or Google Drive, then restore it on your other device.';
   } catch(err){
     console.error(err);
+    pendingBackup = null; showBackupDate();
     foot.textContent = 'Could not make the backup: ' + (err && err.message ? err.message : err);
   }
 });
@@ -739,6 +755,8 @@ el('restoreInput').addEventListener('change', async e => {
     const result = await importBackup(file);
     loadFilterSettings(); loadPronunciationRules(); Library.shelves = loadShelves();
     el('filterWords').value = customBadWords.join(', ');
+    Player.clearAudio(); // clips prepared under the old rules and filter words are stale now
+    if(Player.chapters.length){ Reader.renderedCh = -1; Reader.highlight(); }
     await Library.refresh(); syncSettings();
     // If the open book's place moved forward on the other device, go there now.
     if(Reader.book && Player.state === 'idle'){
