@@ -5,20 +5,21 @@ A private, local audiobook player for your browser. Upload an EPUB or PDF and it
 ## Features
 
 - **EPUB and PDF support** — drop in a file or choose one from your device
-- **Kokoro AI voice** — a free, offline-capable neural text-to-speech engine (not a robotic browser voice), with about a dozen built-in voices to choose from
-- **Reads along visually** — shows the previous, current, and next paragraph, with the sentence being read highlighted as it plays
-- **Remembers your place** — both your reading position and the last book you opened reopen automatically next time
-- **Tap Contents to jump to any chapter**
-- **Adjustable text size and a dark mode**
-- **Optional language filter** — mutes and masks a set of common profanity, on by default; you can turn it off or add your own words in Settings
-- **Lock-screen playback controls** — play/pause/skip from your phone's lock screen while it plays in the background
+- **Kokoro and Piper AI voices** — free neural text-to-speech (not a robotic browser voice), in this browser or on a voice server you run yourself
+- **Reads along, sentence by sentence** — the whole chapter is on screen, the sentence being spoken is highlighted, and a "Now" line in the player always shows it. Follow-along keeps it in view and catches up the moment you unlock your phone; scroll away yourself and a pill brings you back
+- **Library with shelves** — book cards with cover, author, percent read and time left; put books on shelves you name yourself (Christian, Biography, Sci-fi, whatever fits)
+- **Remembers your place** to the sentence, for every book
+- **Tap the chapter title for Contents**; the scrubber is time in the chapter
+- **Text size, five fonts, paper or dark theme**
+- **Optional language filter** and a pronunciation dictionary for names the voice gets wrong
+- **Lock-screen playback controls** with the book's cover
 
 ## How to use it
 
-1. Open the page and choose an `.epub` or `.pdf` file
-2. Tap **Play** — the first time, it downloads the voice model (a one-time download, cached afterward)
-3. Use **Contents** to jump between chapters, and **Settings** to change voice, speed, text size, dark mode, or the language filter
-4. Just close the tab whenever — it picks back up from the same spot next time you open the page
+1. Open the page and add an `.epub` or `.pdf` file; it appears as a card in your Library
+2. Tap the card, then **Play** — the first time, the voice is downloaded or the voice server is contacted
+3. The chips on the player change **voice** and **speed**; **Aa** changes text size, font, theme and follow-along; the sliders icon opens **Settings** for everything else
+4. Just close the tab whenever — every book keeps its own place
 
 ## Privacy
 
@@ -32,11 +33,13 @@ Nothing is ever uploaded anywhere. The book file, the voice model, and your read
 
 ## Known limitations
 
-- Only remembers one book at a time — opening a new one replaces the previous "last opened" book
+- With Piper on a voice server, a paragraph is read as one clip. The highlight moves through it sentence by sentence using timings the server reports (an `X-Sentence-Offsets` header of seconds, one per sentence in the request's `sentences` list) or, for a server that doesn't report them, an estimate from sentence length
 - PDF paragraph breaks are an approximation based on line spacing, since PDFs don't have real paragraph markup the way EPUBs do
 - DRM-protected EPUBs (from most bookstores) can't be opened, since the text itself is encrypted
 - Voice quality and speed depend on your device's hardware
 
 ## Credits
+
+The code is split by job: `book.js` parses files, `text.js` splits sentences and applies the word rules, `store.js` is the on-device library, `voice.js` is the voice engines and server, `player.js` is playback, `app.js` is the screens.
 
 Built with [Kokoro](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) for text-to-speech, [pdf.js](https://mozilla.github.io/pdf.js/) for PDF parsing, and [JSZip](https://stuk.github.io/jszip/) for EPUB parsing.
