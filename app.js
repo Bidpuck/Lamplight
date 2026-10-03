@@ -785,6 +785,11 @@ function syncSettings(){
   el('serverRow').classList.toggle('hidden', !Voice.settings.useServer);
   el('serverSub').textContent = Voice.settings.serverUrl.replace(/^https?:\/\//, '').replace(/\/[^/]*$/, '');
   el('serverDot').classList.toggle('online', Voice.settings.useServer);
+  const gen = Player.genSummary();
+  el('genSpeedVal').textContent = gen.clips ? gen.timesFaster.toFixed(1) + '×' : '—';
+  el('genSpeedSub').textContent = gen.clips
+    ? 'Makes speech ' + gen.timesFaster.toFixed(1) + '× as fast as it’s read, plus ' + gen.fixed.toFixed(1) + ' s a clip (' + gen.clips + ' clips)'
+    : 'Measured as this voice reads';
   el('shelvesVal').textContent = Library.shelves.length;
   el('seriesToggle').checked = settingGet('groupSeries', '1') === '1';
   Reader.updateChips();

@@ -13,10 +13,26 @@
 // the element at once, on silence, and the silence keeps looping whenever the next
 // clip isn't ready yet; a clip that is refused anyway stays loaded for the next tap.
 
-const NORMAL_LOOKAHEAD = 6;            // sentence clips prepared ahead during normal playback
-const BACKGROUND_BURST_LOOKAHEAD = 40; // ...and the one-time burst when the screen goes dark
-const NORMAL_PARAGRAPH_LOOKAHEAD = 2;
-const BACKGROUND_BURST_PARAGRAPH_LOOKAHEAD = 8;
+const NORMAL_LOOKAHEAD_SEC = 45;            // seconds of audio prepared ahead during normal playback
+const BACKGROUND_BURST_LOOKAHEAD_SEC = 240; // ...and the one-time burst when the screen goes dark
+const GEN_IN_FLIGHT = 2; // clips asked for at once: one being made, the next waiting right behind it
+
+// A clip is made whole before any of it plays, so how far ahead playback needs to be
+// depends on how long the next clips are, not on a fixed number of words. Starting
+// from a standstill (Play, a jump, or a clip that wasn't ready in time), playback
+// waits until every clip due in the next START_HORIZON_SEC is predicted to be ready
+// when it's needed: one wait up front instead of a second stop a sentence later.
+const START_HORIZON_SEC = 30;
+const START_MAX_WAIT_SEC = 20; // ...but never holds the start longer than this
+const GEN_SAFETY = 1.15;       // ...and treats each clip as taking this much longer than predicted
+
+// How long a clip takes to make: fixed + perChar × characters, fitted to the clips
+// this voice setup made lately. Until it has made some, it assumes Kokoro measured on
+// two CPU cores like the free Hugging Face Space (0.30 s + 21.7 ms a character, with
+// speech at 62 ms a character), plus time on the network.
+const GEN_PRIOR = { fixed: 0.8, perChar: 0.025 };
+const GEN_MODEL_DECAY = 0.95; // each new clip counts this much more than the one before
+const DROPPED = 'dropped';    // a queued clip given up because the reader moved on
 
 const Player = {
   chapters: [],
@@ -28,7 +44,11 @@ const Player = {
   listeners: [],
   audio: null,
   token: 0,
-  cache: new Map(),         // clip key -> {promise, blob}; blob is set once it's ready
+  cache: new Map(),         // clip key -> {unit, chars, promise, blob}; blob is set once it's ready
+  genQueue: [],             // clips waiting their turn to be made, in reading order
+  genRunning: [],           // ...and the ones being made now: {key, chars, sentAt}
+  lastGenDone: 0,           // when the voice last finished a clip (performance.now())
+  genModels: settingGetJSON('genModels', {}), // voice setup -> weighted sums for the fit
   clip: null,               // {first, last, offsets, blob} for the clip now loaded
   holding: false,           // the element is looping silence while a clip is made
   blocked: false,           // the loaded clip was refused by the browser; Play starts it
@@ -69,6 +89,7 @@ const Player = {
     this.chapters = chapters;
     this.book = book;
     this.cache.clear();
+    this.dropQueued(() => true);
     this.finished = false;
     this.state = 'idle';
     // Character counts drive the time estimates for the scrubber and the library card.
@@ -91,7 +112,7 @@ const Player = {
   unload(){
     this.stopAudio();
     this.saveSummary(true);
-    this.chapters = []; this.book = null; this.cache.clear(); this.state = 'idle';
+    this.chapters = []; this.book = null; this.cache.clear(); this.dropQueued(() => true); this.state = 'idle';
     this.emit('state');
   },
 
@@ -249,7 +270,10 @@ const Player = {
     if(wasPlaying) this.speakCurrent();
   },
 
-  // ---------------- The clip loop ----------------
+  // ---------------- Making clips ----------------
+  // Clips are asked for in reading order, GEN_IN_FLIGHT at a time, so the voice
+  // makes them in the order they'll be played (a server given them all at once
+  // might not) and how long each takes can be measured.
   // The unit of audio that covers sentence `s` of chapter `c`.
   unitFor(c, s){
     const ch = this.chapters[c];
@@ -274,8 +298,10 @@ const Player = {
       const sentences = [];
       for(let i = unit.first; i <= unit.last; i++) sentences.push(speechFilteredText(ch.sentences[i]) || ' ');
       const chars = sentences.reduce((a, t) => a + t.length, 0);
-      const entry = {};
-      entry.promise = Voice.generate(sentences).then(blob => {
+      const entry = { unit, chars: this.unitChars(unit) };
+      entry.promise = new Promise((resolve, reject) => {
+        this.genQueue.push({ key: unit.key, entry, run: () => Voice.generate(sentences), resolve, reject });
+      }).then(blob => {
         // Learn how fast this voice actually reads, so the time estimates fit it.
         if(blob.durationSec && chars > 40){
           const observed = blob.durationSec * (Voice.settings.speed || 1) / chars;
@@ -285,46 +311,182 @@ const Player = {
         entry.blob = blob;
         return blob;
       });
-      entry.promise.catch(() => this.cache.delete(unit.key)); // a failure isn't worth remembering
+      // A failure isn't worth remembering.
+      entry.promise.catch(() => { if(this.cache.get(unit.key) === entry) this.cache.delete(unit.key); });
       this.cache.set(unit.key, entry);
+      this.pumpGen();
     }
     return this.cache.get(unit.key).promise;
   },
   clipReady(unit){ const entry = this.cache.get(unit.key); return !!(entry && entry.blob); },
-  prefetch(burst){
-    const paragraphs = Voice.batchesParagraphs();
-    let count = paragraphs ? (burst ? BACKGROUND_BURST_PARAGRAPH_LOOKAHEAD : NORMAL_PARAGRAPH_LOOKAHEAD)
-                           : (burst ? BACKGROUND_BURST_LOOKAHEAD : NORMAL_LOOKAHEAD);
-    let unit = this.unitFor(this.ch, this.s);
-    while(count-- > 0){
-      unit = this.unitAfter(unit);
-      if(!unit) break;
-      this.getAudio(unit).catch(() => {});
+  unitChars(unit){
+    const ch = this.chapters[unit.c];
+    return ch.charBefore[unit.last] + ch.sentences[unit.last].length - ch.charBefore[unit.first];
+  },
+  // Seconds of speech in a clip: measured once it's made, estimated until then.
+  unitSec(unit){
+    const entry = this.cache.get(unit.key);
+    return entry && entry.blob && entry.blob.durationSec ? entry.blob.durationSec : this.unitChars(unit) * this.secPerCharNow();
+  },
+  pumpGen(){
+    while(this.genRunning.length < GEN_IN_FLIGHT && this.genQueue.length){
+      const job = this.genQueue.shift();
+      // The cache was cleared since this was asked for (a new voice, a cleared cache).
+      if(this.cache.get(job.key) !== job.entry){ job.reject(new Error(DROPPED)); continue; }
+      const run = { key: job.key, chars: job.entry.chars, sentAt: performance.now() };
+      this.genRunning.push(run);
+      const finish = ok => {
+        const now = performance.now();
+        // Time on the voice: from when it could start on this one (it was asked for,
+        // and the one before it was done) until it was done.
+        if(ok) this.learnGenTime(run.chars, (now - Math.max(run.sentAt, this.lastGenDone)) / 1000);
+        this.lastGenDone = now;
+        this.genRunning.splice(this.genRunning.indexOf(run), 1);
+        this.pumpGen();
+      };
+      job.run().then(blob => { finish(true); job.resolve(blob); }, err => { finish(false); job.reject(err); });
     }
   },
+  // Gives up queued clips (not ones already being made) that `drop(job)` picks.
+  dropQueued(drop){
+    this.genQueue = this.genQueue.filter(job => {
+      if(!drop(job)) return true;
+      if(this.cache.get(job.key) === job.entry) this.cache.delete(job.key);
+      job.reject(new Error(DROPPED));
+      return false;
+    });
+  },
+  // Asks for the clip at the reading position and the ones after it, up to the
+  // lookahead, and gives up queued clips outside that run (the reader moved on).
+  prefetch(burst){
+    const aheadSec = burst ? BACKGROUND_BURST_LOOKAHEAD_SEC : NORMAL_LOOKAHEAD_SEC;
+    const wanted = [];
+    let unit = this.unitFor(this.ch, this.s), sec = 0;
+    while(unit && (wanted.length < 2 || sec < aheadSec)){
+      wanted.push(unit);
+      sec += this.unitSec(unit);
+      unit = this.unitAfter(unit);
+    }
+    const order = new Map(wanted.map((u, i) => [u.key, i]));
+    this.dropQueued(job => !order.has(job.key));
+    wanted.forEach(u => this.getAudio(u).catch(() => {}));
+    this.genQueue.sort((a, b) => order.get(a.key) - order.get(b.key)); // after a jump back, the new clips go first
+  },
 
-  async speakCurrent(){
+  // ---------------- How long clips take ----------------
+  genModelKey(){
+    let where = 'device';
+    if(Voice.settings.useServer){ try{ where = new URL(Voice.settings.serverUrl).host; } catch(e){ where = 'server'; } }
+    return Voice.settings.engine + ' ' + where;
+  },
+  // Weighted sums for a least-squares line through (characters, seconds). A new voice
+  // setup starts from two made-up clips on the GEN_PRIOR line.
+  genStats(){
+    const key = this.genModelKey();
+    if(!this.genModels[key]){
+      const m = { w: 0, x: 0, y: 0, xx: 0, xy: 0, clips: 0 };
+      [40, 300].forEach(c => { const t = GEN_PRIOR.fixed + GEN_PRIOR.perChar * c; m.w += 1; m.x += c; m.y += t; m.xx += c * c; m.xy += c * t; });
+      this.genModels[key] = m;
+    }
+    return this.genModels[key];
+  },
+  genFit(){
+    const m = this.genStats();
+    const den = m.w * m.xx - m.x * m.x;
+    const perChar = Math.min(0.5, Math.max(0.0005, den > 1e-9 ? (m.w * m.xy - m.x * m.y) / den : GEN_PRIOR.perChar));
+    const fixed = Math.min(10, Math.max(0, (m.y - perChar * m.x) / m.w));
+    return { fixed, perChar, clips: m.clips };
+  },
+  genSecFor(chars){ const f = this.genFit(); return f.fixed + f.perChar * chars; },
+  learnGenTime(chars, sec){
+    if(!(chars > 0) || !(sec > 0)) return;
+    sec = Math.min(sec, 2 * this.genSecFor(chars) + 2); // one stalled request shouldn't throw the fit
+    const m = this.genStats();
+    ['w', 'x', 'y', 'xx', 'xy'].forEach(k => { m[k] *= GEN_MODEL_DECAY; });
+    m.w += 1; m.x += chars; m.y += sec; m.xx += chars * chars; m.xy += chars * sec; m.clips++;
+    settingSet('genModels', JSON.stringify(this.genModels));
+  },
+
+  // Seconds to hold the start so no clip due in the next START_HORIZON_SEC is late,
+  // predicting the clips still to come as made one after another, in order.
+  startDelay(){
+    const now = performance.now() / 1000;
+    const readyAt = new Map();
+    let free = this.lastGenDone / 1000; // when the voice gets to the next clip
+    this.genRunning.forEach(run => {
+      free = Math.max(free, run.sentAt / 1000) + this.genSecFor(run.chars) * GEN_SAFETY;
+      free = Math.max(free, now + 0.2); // overdue: assume it's nearly done
+      readyAt.set(run.key, free);
+    });
+    free = Math.max(free, now);
+    this.genQueue.forEach(job => { free += this.genSecFor(job.entry.chars) * GEN_SAFETY; readyAt.set(job.key, free); });
+
+    let unit = this.unitFor(this.ch, this.s), startsIn = 0, wait = 0;
+    for(let i = 0; unit && startsIn <= START_HORIZON_SEC && i < 60; i++){
+      let ready = now;
+      if(!this.clipReady(unit)){
+        if(!readyAt.has(unit.key)){ free += this.genSecFor(this.unitChars(unit)) * GEN_SAFETY; readyAt.set(unit.key, free); }
+        ready = readyAt.get(unit.key);
+      }
+      wait = Math.max(wait, ready - now - startsIn);
+      let sec = this.unitSec(unit);
+      if(i === 0 && this.s > unit.first){ // resuming partway into a paragraph clip
+        const ch = this.chapters[unit.c];
+        sec *= (this.unitChars(unit) - (ch.charBefore[this.s] - ch.charBefore[unit.first])) / this.unitChars(unit);
+      }
+      startsIn += sec;
+      unit = this.unitAfter(unit);
+    }
+    return wait;
+  },
+  // Waits out startDelay(), playing silence meanwhile. Resolves false if playback
+  // was stopped or moved while waiting.
+  async waitForHeadStart(myToken){
+    const began = performance.now();
+    while(performance.now() - began < START_MAX_WAIT_SEC * 1000){
+      const wait = this.startDelay();
+      if(wait < 0.3) break;
+      this.holdSilence();
+      setEngineStatus('Buffering… ' + Math.ceil(wait) + ' s');
+      await new Promise(resolve => setTimeout(resolve, Math.min(1000, wait * 1000)));
+      if(myToken !== this.token) return false;
+    }
+    return true;
+  },
+  // For Settings: how fast this voice setup has been making speech.
+  genSummary(){
+    const f = this.genFit();
+    return { timesFaster: this.secPerCharNow() / f.perChar, fixed: f.fixed, clips: f.clips };
+  },
+
+  // ---------------- The clip loop ----------------
+  // `continuing` is set when the clip before this one just ended; anything else is a
+  // start from a standstill.
+  async speakCurrent(continuing){
     const myToken = ++this.token;
     const ch = this.chapter();
     if(!ch || this.s >= ch.sentences.length){
       // Chapter finished: on to the next, or the book is done.
-      if(this.ch < this.chapters.length - 1){ this.setPosition(this.ch + 1, 0); this.speakCurrent(); }
+      if(this.ch < this.chapters.length - 1){ this.setPosition(this.ch + 1, 0); this.speakCurrent(continuing); }
       else { this.stopAudio(); this.finished = true; this.s = ch ? ch.sentences.length - 1 : 0; this.setState('idle'); this.saveProgress(); this.saveSummary(true); this.emit('position'); this.emit('finished'); }
       return;
     }
     this.setState('preparing');
     const unit = this.unitFor(this.ch, this.s);
-    if(!this.clipReady(unit)) this.holdSilence();
+    const stalled = !this.clipReady(unit);
+    if(stalled) this.holdSilence();
     const ready = await Voice.ensureReady();
     if(myToken !== this.token) return;
     if(!ready){ this.stopAudio(); this.setState('idle'); return; }
 
-    setEngineStatus('Generating…');
+    this.prefetch(document.hidden); // this clip first, then the ones after it
+    if(stalled) setEngineStatus('Generating…');
     let blob;
     try{ blob = await this.getAudio(unit); }
     catch(err){
-      console.error(err);
       if(myToken !== this.token) return;
+      if(err && err.message === DROPPED){ this.speakCurrent(continuing); return; } // the cache was cleared under it
+      console.error(err);
       setEngineStatus('Voice generation failed (' + (err && err.message ? err.message : 'unknown error') + ') — skipping.');
       const nextUnit = this.unitAfter(unit);
       if(nextUnit){ this.setPosition(nextUnit.c, nextUnit.first); this.speakCurrent(); }
@@ -332,6 +494,7 @@ const Player = {
       return;
     }
     if(myToken !== this.token || !blob) return;
+    if((stalled || !continuing) && !(await this.waitForHeadStart(myToken))) return;
     setEngineStatus('');
 
     const audio = this.audio;
@@ -356,17 +519,16 @@ const Player = {
       if(myToken !== this.token) return;
       this.clip = null;
       const nextUnit = this.unitAfter(unit);
-      if(!nextUnit){ this.s = ch.sentences.length; this.speakCurrent(); return; }
+      if(!nextUnit){ this.s = ch.sentences.length; this.speakCurrent(true); return; }
       this.setPosition(nextUnit.c, nextUnit.first);
       // A closing quote with nothing after it is a natural end-of-exchange beat.
       const extraPause = endsQuotedDialogue(lastText) ? DIALOGUE_END_PAUSE_MS : 0;
-      if(extraPause) setTimeout(() => { if(myToken === this.token) this.speakCurrent(); }, extraPause);
-      else this.speakCurrent();
+      if(extraPause) setTimeout(() => { if(myToken === this.token) this.speakCurrent(true); }, extraPause);
+      else this.speakCurrent(true);
     };
     this.setState('playing');
     this.emit('position');
     this.startClip(myToken);
-    this.prefetch(false);
   },
 
   onTimeUpdate(){
