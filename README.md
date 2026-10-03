@@ -13,6 +13,7 @@ A private, local audiobook player for your browser. Upload an EPUB or PDF and it
 - **Text size, five fonts, paper or dark theme**
 - **Optional language filter** and a pronunciation dictionary for names the voice gets wrong
 - **Lock-screen playback controls** with the book's cover
+- **Starts once it can keep going** — each sentence is made whole before it plays, so when you press Play (or jump) it waits until the sentences coming up can be made before they're needed, instead of reading a line and stopping again. It learns how fast your voice server or device is as it reads; Settings shows the measured speed
 - **Watched folder** — on Chrome or Edge for desktop, choose a folder once and every new EPUB or PDF in it, or in its subfolders, is added to the library when the app opens (and on demand with Check now). New books arrive without a shelf. Other browsers can add a folder's contents when it is picked; iPhone adds files through the Files picker, several at a time
 - **Series** — books that belong to a series (from the EPUB's own series metadata, or set by hand in the book's ⋯ menu) sit together in the Library under a series header, in order; a switch in Settings turns the grouping off
 - **Search within the book** from the Contents sheet; tap a match to start reading there
