@@ -345,6 +345,14 @@ function encodeWavFloat32(samples, sampleRate){
   return new Blob([buffer], {type:'audio/wav'});
 }
 
+// Half a second of silence, made once. The player loops it while the next clip is
+// still being made, and plays it inside a tap to unlock an <audio> element on iPhone.
+let silentClipUrlCache = null;
+function silentClipUrl(){
+  if(!silentClipUrlCache) silentClipUrlCache = URL.createObjectURL(encodeWavFloat32(new Float32Array(11025), 22050));
+  return silentClipUrlCache;
+}
+
 // One AudioContext for the life of the page (Safari caps concurrent contexts), resumed
 // on every use because browsers suspend a quiet context, and a suspended one makes
 // decodeAudioData() hang rather than reject.
@@ -568,11 +576,15 @@ const Voice = {
   async preview(text){
     text = (text || '').trim();
     if(!text) return;
+    // iPhone only lets this element play the sample (seconds from now, once it's
+    // generated) if it was started inside the tap, so start it now on silence.
+    const audio = new Audio(silentClipUrl());
+    audio.play().catch(() => {});
     const ok = await Voice.ensureReady();
     if(!ok) return;
     const blob = await Voice.generate([speechFilteredText(text) || text]);
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
+    audio.src = url;
     audio.addEventListener('ended', () => URL.revokeObjectURL(url));
     await audio.play();
   }

@@ -6,6 +6,12 @@
 // A clip is one sentence (Kokoro, in-browser Piper) or one whole paragraph (Piper
 // on a voice server). Either way the position advances per sentence: a paragraph
 // clip carries where each of its sentences starts, and timeupdate moves the mark.
+//
+// iPhone is strict about audio a page starts by itself. An <audio> element may only
+// play once it has been started inside a tap, and a page whose audio falls quiet in
+// the background can be suspended and refused the next clip. So a tap on Play starts
+// the element at once, on silence, and the silence keeps looping whenever the next
+// clip isn't ready yet; a clip that is refused anyway stays loaded for the next tap.
 
 const NORMAL_LOOKAHEAD = 6;            // sentence clips prepared ahead during normal playback
 const BACKGROUND_BURST_LOOKAHEAD = 40; // ...and the one-time burst when the screen goes dark
@@ -22,8 +28,10 @@ const Player = {
   listeners: [],
   audio: null,
   token: 0,
-  cache: new Map(),         // clip key -> Promise<Blob>
+  cache: new Map(),         // clip key -> {promise, blob}; blob is set once it's ready
   clip: null,               // {first, last, offsets, blob} for the clip now loaded
+  holding: false,           // the element is looping silence while a clip is made
+  blocked: false,           // the loaded clip was refused by the browser; Play starts it
   secPerChar: parseFloat(settingGet('secPerChar', '')) || 0.075, // seconds of speech per character at 1.0×
   lastSummarySave: 0,
 
@@ -168,9 +176,20 @@ const Player = {
   setSkipUnit(unit){ this.skipUnit = unit; settingSet('skipUnit', unit); },
 
   // ---------------- Play / pause ----------------
+  // Called from a tap (or the lock screen), so the audio is started here, before
+  // anything is awaited: that is what iPhone accepts as the listener's say-so.
   play(){
     if(!this.chapters.length || this.state !== 'idle') return;
+    if(this.blocked && this.clip){
+      this.blocked = false;
+      setEngineStatus('');
+      this.setState('playing');
+      this.startClip(this.token);
+      this.prefetch(false);
+      return;
+    }
     if(this.finished){ this.finished = false; this.ch = 0; this.s = 0; this.emit('chapter'); this.emit('position'); }
+    this.holdSilence();
     this.speakCurrent();
   },
   pause(){
@@ -190,7 +209,36 @@ const Player = {
   stopAudio(){
     this.token++;
     this.clip = null;
-    if(this.audio){ this.audio.onended = null; this.audio.pause(); }
+    this.holding = false;
+    if(this.blocked){ this.blocked = false; setEngineStatus(''); }
+    if(this.audio){ this.audio.onended = null; this.audio.loop = false; this.audio.pause(); }
+  },
+  // Loops silence until the next clip replaces it. A refusal is ignored here: it is
+  // reported, with a way back, when the real clip is refused the same way.
+  holdSilence(){
+    const audio = this.audio;
+    if(!audio || (this.holding && !audio.paused)) return;
+    this.holding = true;
+    this.clip = null;
+    audio.onended = null;
+    audio.loop = true;
+    audio.src = silentClipUrl();
+    audio.play().catch(() => {});
+  },
+  startClip(myToken){
+    this.audio.play().catch(err => {
+      if(myToken !== this.token) return; // a seek, pause or the next clip came first
+      console.error(err);
+      if(err && err.name === 'NotAllowedError'){
+        // Keep the clip and its onended in place, so Play can start it from the tap.
+        this.blocked = true;
+        setEngineStatus("Paused: the browser wouldn't let the next part start on its own. Tap play to keep listening.");
+      } else {
+        setEngineStatus('Playback was blocked: ' + err.message);
+      }
+      this.setState('idle');
+      this.saveSummary(true);
+    });
   },
 
   // Everything generated so far assumed the old voice/speed/filter — drop it.
@@ -226,20 +274,23 @@ const Player = {
       const sentences = [];
       for(let i = unit.first; i <= unit.last; i++) sentences.push(speechFilteredText(ch.sentences[i]) || ' ');
       const chars = sentences.reduce((a, t) => a + t.length, 0);
-      const promise = Voice.generate(sentences).then(blob => {
+      const entry = {};
+      entry.promise = Voice.generate(sentences).then(blob => {
         // Learn how fast this voice actually reads, so the time estimates fit it.
         if(blob.durationSec && chars > 40){
           const observed = blob.durationSec * (Voice.settings.speed || 1) / chars;
           this.secPerChar = this.secPerChar * 0.8 + observed * 0.2;
           settingSet('secPerChar', this.secPerChar.toFixed(4));
         }
+        entry.blob = blob;
         return blob;
       });
-      promise.catch(() => this.cache.delete(unit.key)); // a failure isn't worth remembering
-      this.cache.set(unit.key, promise);
+      entry.promise.catch(() => this.cache.delete(unit.key)); // a failure isn't worth remembering
+      this.cache.set(unit.key, entry);
     }
-    return this.cache.get(unit.key);
+    return this.cache.get(unit.key).promise;
   },
+  clipReady(unit){ const entry = this.cache.get(unit.key); return !!(entry && entry.blob); },
   prefetch(burst){
     const paragraphs = Voice.batchesParagraphs();
     let count = paragraphs ? (burst ? BACKGROUND_BURST_PARAGRAPH_LOOKAHEAD : NORMAL_PARAGRAPH_LOOKAHEAD)
@@ -258,15 +309,16 @@ const Player = {
     if(!ch || this.s >= ch.sentences.length){
       // Chapter finished: on to the next, or the book is done.
       if(this.ch < this.chapters.length - 1){ this.setPosition(this.ch + 1, 0); this.speakCurrent(); }
-      else { this.finished = true; this.s = ch ? ch.sentences.length - 1 : 0; this.setState('idle'); this.saveProgress(); this.saveSummary(true); this.emit('position'); this.emit('finished'); }
+      else { this.stopAudio(); this.finished = true; this.s = ch ? ch.sentences.length - 1 : 0; this.setState('idle'); this.saveProgress(); this.saveSummary(true); this.emit('position'); this.emit('finished'); }
       return;
     }
     this.setState('preparing');
+    const unit = this.unitFor(this.ch, this.s);
+    if(!this.clipReady(unit)) this.holdSilence();
     const ready = await Voice.ensureReady();
     if(myToken !== this.token) return;
-    if(!ready){ this.setState('idle'); return; }
+    if(!ready){ this.stopAudio(); this.setState('idle'); return; }
 
-    const unit = this.unitFor(this.ch, this.s);
     setEngineStatus('Generating…');
     let blob;
     try{ blob = await this.getAudio(unit); }
@@ -276,13 +328,15 @@ const Player = {
       setEngineStatus('Voice generation failed (' + (err && err.message ? err.message : 'unknown error') + ') — skipping.');
       const nextUnit = this.unitAfter(unit);
       if(nextUnit){ this.setPosition(nextUnit.c, nextUnit.first); this.speakCurrent(); }
-      else this.setState('idle');
+      else { this.stopAudio(); this.setState('idle'); }
       return;
     }
     if(myToken !== this.token || !blob) return;
     setEngineStatus('');
 
     const audio = this.audio;
+    this.holding = false;
+    audio.loop = false;
     if(audio.dataset.blobUrl) URL.revokeObjectURL(audio.dataset.blobUrl);
     const url = URL.createObjectURL(blob);
     audio.src = url;
@@ -311,7 +365,7 @@ const Player = {
     };
     this.setState('playing');
     this.emit('position');
-    audio.play().catch(err => { console.error(err); setEngineStatus('Playback was blocked: ' + err.message); this.setState('idle'); });
+    this.startClip(myToken);
     this.prefetch(false);
   },
 
